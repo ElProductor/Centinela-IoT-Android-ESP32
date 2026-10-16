@@ -1,0 +1,13 @@
+{
+  "name": "centinela-iot-server",
+  "version": "1.0.0",
+  "description": "Servidor Node.js de Auditoria y Telemetria para Centinela-IoT (INACAP)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5"
+  }
+}

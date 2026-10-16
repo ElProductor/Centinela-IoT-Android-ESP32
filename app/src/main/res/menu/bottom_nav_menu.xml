@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/navigation_centinela"
+        android:icon="@drawable/ic_shield"
+        android:title="@string/nav_centinela" />
+    <item
+        android:id="@+id/navigation_universal"
+        android:icon="@drawable/ic_hub"
+        android:title="@string/nav_universal" />
+    <item
+        android:id="@+id/navigation_audit"
+        android:icon="@drawable/ic_audit"
+        android:title="@string/nav_audit" />
+    <item
+        android:id="@+id/navigation_settings"
+        android:icon="@drawable/ic_settings"
+        android:title="@string/nav_settings" />
+</menu>

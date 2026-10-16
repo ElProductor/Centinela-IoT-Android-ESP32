@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand / Primary Colors (Industrial Cyber / OT Security) -->
+    <color name="primary">#00E5FF</color>
+    <color name="primary_variant">#00B0FF</color>
+    <color name="on_primary">#001018</color>
+
+    <color name="secondary">#00E676</color>
+    <color name="secondary_variant">#00C853</color>
+    <color name="on_secondary">#00210A</color>
+
+    <color name="inacap_red">#D32F2F</color>
+    <color name="inacap_red_dark">#B71C1C</color>
+
+    <!-- Backgrounds & Surfaces (Industrial Dark Mode) -->
+    <color name="background">#0B0F19</color>
+    <color name="surface">#131B2E</color>
+    <color name="surface_variant">#1E2945</color>
+    <color name="card_bg">#162038</color>
+    <color name="card_stroke">#29385C</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#94A3B8</color>
+    <color name="text_muted">#64748B</color>
+
+    <!-- Operational State Colors (OT / SCADA) -->
+    <color name="status_safe">#00E676</color>
+    <color name="status_warning">#FFD600</color>
+    <color name="status_alarm">#FF1744</color>
+    <color name="status_locked">#FF5252</color>
+    <color name="status_unlocked">#00E676</color>
+    <color name="status_info">#2979FF</color>
+
+    <!-- Transparent / Overlay -->
+    <color name="alarm_overlay">#33FF1744</color>
+    <color name="safe_overlay">#2200E676</color>
+    <color name="divider">#1E293B</color>
+</resources>

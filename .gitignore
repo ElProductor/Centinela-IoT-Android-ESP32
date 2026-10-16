@@ -1,0 +1,22 @@
+# Built files
+.gradle/
+build/
+app/build/
+gradle-8.9/
+gradle_dist/
+
+# Local configuration
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# OS files
+.DS_Store
+Thumbs.db

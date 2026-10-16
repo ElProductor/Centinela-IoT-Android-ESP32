@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Centinela IoT</string>
+    <string name="app_full_title">Centinela-IoT: Nodo de Seguridad Edge Multiparamétrico</string>
+    <string name="app_subtitle">INACAP Puerto Montt • TI3042 • Aplicaciones Móviles IoT</string>
+    <string name="iso_standard_label">Norma ISO/IEC 27400:2022 • Seguridad IoT / OT</string>
+
+    <!-- Navigation Tabs -->
+    <string name="nav_centinela">Centinela</string>
+    <string name="nav_universal">ESP32 Hub</string>
+    <string name="nav_audit">Auditoría</string>
+    <string name="nav_settings">Configuración</string>
+
+    <!-- Login -->
+    <string name="login_title">CENTINELA - IoT</string>
+    <string name="login_welcome">Acceso a Nodo de Supervisión y Control OT</string>
+    <string name="hint_username">Nombre de Usuario (ej. admin)</string>
+    <string name="hint_password">Contraseña</string>
+    <string name="btn_login">INICIAR SESIÓN</string>
+    <string name="login_default_accounts">Cuentas demo: admin/admin123 • operador/inacap2026</string>
+    <string name="error_invalid_credentials">Credenciales incorrectas o usuario bloqueado</string>
+    <string name="msg_session_started">Sesión iniciada correctamente</string>
+
+    <!-- Centinela Dashboard -->
+    <string name="telemetry_distance_title">Distancia Perimetral (HC-SR04)</string>
+    <string name="telemetry_light_title">Nivel de Luz (LDR GL5528)</string>
+    <string name="telemetry_servo_title">Pestillo Físico (SG90 Servo)</string>
+    <string name="telemetry_buzzer_title">Alarma Acústica (Buzzer)</string>
+    <string name="telemetry_button_title">Pulsador Físico (Desarme)</string>
+    
+    <string name="state_safe">PERÍMETRO SEGURO</string>
+    <string name="state_breached">¡INTRUSIÓN EN CURSO!</string>
+    <string name="state_locked">BLOQUEADO (0°)</string>
+    <string name="state_unlocked">DESBLOQUEADO (90°)</string>
+    <string name="state_sounding">ALARMA ACTIVA (2 kHz)</string>
+    <string name="state_silent">SILENCIADO (0 Hz)</string>
+    <string name="state_btn_pressed">PRESIONADO (LOW)</string>
+    <string name="state_btn_released">EN REPOSO (HIGH)</string>
+
+    <!-- Actions -->
+    <string name="btn_emergency_unlock">APERTURA REMOTA (OVERRIDE)</string>
+    <string name="btn_arm_system">ARMAR SISTEMA</string>
+    <string name="btn_disarm_system">DESARMAR SISTEMA</string>
+    <string name="btn_silence_alarm">SILENCIAR ALARMA</string>
+
+    <!-- Simulation Mode -->
+    <string name="mode_real_hardware">Hardware Real (Wi-Fi ESP32)</string>
+    <string name="mode_simulation">Modo Simulación (ESP32 Virtual)</string>
+    <string name="simulator_note">Simulador interno activo para pruebas sin hardware</string>
+
+    <!-- Universal Hub -->
+    <string name="universal_title">ESP32 Universal Hub</string>
+    <string name="universal_subtitle">Control genérico de pines GPIO, PWM, Relés y Sensores</string>
+    <string name="btn_send_command">Enviar</string>
+    <string name="btn_clear_console">Limpiar Consola</string>
+
+    <!-- Audit -->
+    <string name="audit_title">Registro Inmutable de Auditoría</string>
+    <string name="audit_subtitle">Trazabilidad de accesos, intrusiones y aperturas remotas</string>
+    <string name="btn_clear_logs">Limpiar Registros</string>
+    <string name="btn_export_logs">Exportar</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Parámetros de Red y Dispositivo</string>
+    <string name="hint_ip_address">Dirección IP del ESP32 / Servidor</string>
+    <string name="hint_port">Puerto (ej. 3000 o 80)</string>
+    <string name="hint_token">Token / API Key (Seguridad OT)</string>
+    <string name="btn_save_config">GUARDAR CONFIGURACIÓN</string>
+    <string name="btn_logout">CERRAR SESIÓN</string>
+</resources>
