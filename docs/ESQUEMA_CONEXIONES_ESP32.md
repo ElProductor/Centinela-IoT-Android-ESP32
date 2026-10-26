@@ -1,80 +1,74 @@
-# Diagrama Esquemático y Manual de Conexión: ESP32-WROOM-32
+# Diagrama de Conexiones Físicas: Placa ESP32 (Serigrafía D1, D2, D4...)
 ## Proyecto: Centinela-IoT: Nodo de Seguridad Edge Multiparamétrico
 
-Este documento describe la conexión física exacta para el microcontrolador **ESP32-WROOM-32**, corrigiendo el montaje referencial erróneo de la Figura 1 que mostraba un Arduino UNO.
+En la mayoría de las placas **ESP32 DevKit (30 o 38 pines)**, los pines no vienen marcados con la palabra "GPIO", sino con la letra **"D"** seguida del número (ej. **D4, D5, D13, D14, D18, D34**). 
+
+> **Regla de oro:** En el ESP32, **D = GPIO**.  
+> Por ejemplo: **D4 = GPIO 4**, **D13 = GPIO 13**, **D18 = GPIO 18**.
 
 ---
 
-### 1. Diagrama de Conexión en Protoboard (ASCII)
+### 1. Mapa de Pines de tu Placa ESP32 (30 Pines Típica)
 
 ```text
-               +-------------------------------------------+
-               |             ESP32-WROOM-32                |
-               |                                           |
-               | [3V3]  [EN]  [VP]  [VN]  [34]  [35]  [32] |
-               | [33]   [25]  [26]  [27]  [14]  [12]  [GND]|
-               |                                           |
-               | [VIN]  [GND] [13]  [12]  [14]  [27]  [26] |
-               | [GPIO 4]  [GPIO 5]  [GPIO 18]             |
-               +-----+---------+---------+-----------------+
-                     |         |         |
-                     |         |         +---------> Divisor Resistor (1k) <--- [HC-SR04 Echo (5V)]
-                     |         |                         |
-                     |         |                      Resistor (2k)
-                     |         |                         |
-                     |         |                        [GND]
-                     |         |
-                     |         +-------------------> [HC-SR04 Trig]
-                     |
-                     +-----------------------------> [Pulsador Táctil (INPUT_PULLUP)] -> [GND]
-
-  [LDR GL5528] --------> GPIO 34 (ADC1_CH6) 
-                   |
-                Resistor 10k
-                   |
-                 [GND]
-
-  [SG90 Servo] --------> Señal a GPIO 13 (PWM)
-                   |
-                 Alimentación VCC a 5V (Línea VIN)
-                 Tierra GND común
-
-  [Buzzer Pasivo] -----> Señal a GPIO 14 (Canal LEDC PWM)
-                   |
-                 Tierra GND común
+                  +-------------------------+
+                  |         ESP32           |
+                  |     [Antena Wi-Fi]      |
+                  |                         |
+            [EN]  |                         |  [D23] 
+   (GPIO 36) [VP]  |                         |  [D22] 
+   (GPIO 39) [VN]  |                         |  [TX0] (GPIO 1)
+   (GPIO 34) [D34] |                         |  [RX0] (GPIO 3)
+   (GPIO 35) [D35] |                         |  [D21] 
+   (GPIO 32) [D32] |                         |  [D19] 
+   (GPIO 33) [D33] |                         |  [D18] (GPIO 18) <--- Echo (HC-SR04 vía divisor)
+   (GPIO 25) [D25] |                         |  [D5]  (GPIO 5)  ---> Trig (HC-SR04)
+   (GPIO 26) [D26] |                         |  [TX2] (GPIO 17)
+   (GPIO 27) [D27] |                         |  [RX2] (GPIO 16)
+   (GPIO 14) [D14] |                         |  [D4]  (GPIO 4)  <--- Pulsador de desarme
+   (GPIO 12) [D12] |                         |  [D2]  
+   (GPIO 13) [D13] |                         |  [D15] 
+            [GND] |                         |  [GND] (Tierra)
+   (Alim 5V) [VIN] |                         |  [3V3] (Salida 3.3V para LDR)
+                  |       [USB / Puerto]    |
+                  +-------------------------+
 ```
 
 ---
 
-### 2. Tabla de Conexión Pin a Pin (ESP32)
+### 2. Tabla Directa: Qué Pin Conectar a Qué Componente
 
-| Módulo / Componente | Pin del Módulo | Conexión en ESP32 / Protoboard | Función y Parámetros |
+| Componente Físico | Pin del Componente | Conectar exactamente a tu placa ESP32 | Explicación |
 | :--- | :--- | :--- | :--- |
-| **HC-SR04** | VCC | **5V (Línea VIN)** | Alimentación del transductor acústico |
-| **HC-SR04** | GND | **GND** | Referencia de masa |
-| **HC-SR04** | Trig | **GPIO 5** | Pulso digital de 10 µs |
-| **HC-SR04** | Echo | **GPIO 18** | **Divisor 1 kΩ / 2 kΩ**: reduce 5V a 3.3V |
-| **LDR GL5528** | Terminal 1 | **3V3** | Alimentación 3.3V de referencia analógica |
-| **LDR GL5528** | Terminal 2 | **GPIO 34** | Divisor con R=10 kΩ a GND (ADC 0-4095) |
-| **Servo SG90** | VCC (Rojo) | **5V (Línea VIN)** | Alimentación independiente de alta corriente |
-| **Servo SG90** | GND (Negro/Marrón) | **GND** | Masa compartida |
-| **Servo SG90** | PWM (Naranja/Amarillo) | **GPIO 13** | Señal 50 Hz (0° = Bloqueo, 90° = Apertura) |
-| **Zumbador Pasivo** | Positivo (+) | **GPIO 14** | Tono de alarma 2000 Hz por LEDC |
-| **Zumbador Pasivo** | Negativo (-) | **GND** | Masa compartida |
-| **Pulsador** | Terminal A | **GPIO 4** | Entrada con `INPUT_PULLUP` interno |
-| **Pulsador** | Terminal B | **GND** | Al presionar conecta a LOW (Desarme) |
+| **Sensor Distancia (HC-SR04)** | **VCC** | Pin **VIN** *(o 5V)* | Alimentación de 5V del USB. |
+| | **GND** | Pin **GND** | Tierra. |
+| | **Trig** | Pin **D5** | Disparo del pulso ultrasónico. |
+| | **Echo** | Pin **D18** *(con divisor 1k/2k)* | Entrada de retorno (protegida a 3.3V). |
+| **Sensor de Luz (LDR GL5528)** | Pata 1 | Pin **3V3** | Alimentación limpia de 3.3V. |
+| | Pata 2 | Pin **D34** *(con resistencia 10k a GND)* | Lectura analógica de luminosidad. |
+| **Micro Servo SG90 (Pestillo)**| Cable Rojo | Pin **VIN** *(o 5V)* | Alimentación de fuerza a 5V. |
+| | Cable Marrón/Negro | Pin **GND** | Tierra común. |
+| | Cable Naranja/Amarillo | Pin **D13** | Señal de posición (0° / 90°). |
+| **Zumbador Pasivo (Buzzer)** | Pata Larga / Positivo (+)| Pin **D14** | Señal PWM de la sirena (2 kHz). |
+| | Pata Corta / Negativo (-)| Pin **GND** | Tierra común. |
+| **Pulsador (Botón)** | Pata 1 | Pin **D4** | Entrada digital de confirmación. |
+| | Pata 2 | Pin **GND** | Conexión a tierra al pulsar. |
 
 ---
 
-### 3. Consideraciones Eléctricas de Seguridad en el Armado
+### 3. Conexión de las Resistencias en la Protoboard
 
-1. **Protección de Entrada GPIO 18 (Echo HC-SR04):**  
-   El pin Echo del HC-SR04 emite un tren de pulsos a 5 V. Si se conecta directamente al ESP32 (cuyos pines toleran un máximo estricto de 3.6 V), el SoC sufrirá degradación por sobretensión. Se intercaló un divisor resistivo simple:
-   $$V_{out} = 5\text{ V} \times \frac{2\text{ k}\Omega}{1\text{ k}\Omega + 2\text{ k}\Omega} = 3.33\text{ V}$$
-   garantizando un nivel TTL seguro para el GPIO 18.
+#### A. El Divisor del Pin Echo (Protege el pin D18):
+El pin Echo entrega 5V y el pin D18 solo tolera 3.3V.
+1. Del pin **Echo** del sensor saca un cable a una fila libre de la protoboard.
+2. En esa misma fila, conecta una pata de la resistencia de **1 kΩ** (Marrón - Negro - Rojo).
+3. La otra pata de la resistencia de **1 kΩ** ponla en otra fila.
+4. En esa segunda fila conecta:
+   * Un cable hacia el pin **D18** del ESP32.
+   * Una pata de la resistencia de **2 kΩ** (Rojo - Negro - Rojo).
+5. La otra pata de la resistencia de **2 kΩ** va a **GND**.
 
-2. **Aislamiento de Potencia del Servomotor SG90:**  
-   El motor SG90 genera picos de consumo de hasta 700 mA durante el arranque del par de torsión. El pin `3V3` del ESP32 está alimentado por un regulador LDO de apenas 500 mA totales. Si el servo se alimenta de `3V3`, el ESP32 se reiniciará continuamente por caída de tensión (*Brownout Reset*). Por ello, el servo se conecta directamente a la línea `5V / VIN` proveniente del puerto USB.
-
-3. **Canal ADC1 para el LDR:**  
-   Se seleccionó **GPIO 34**, el cual pertenece al convertidor analógico-digital **ADC1**. Esto es vital porque en el ESP32 el conversor ADC2 se encuentra inhabilitado cuando el módem Wi-Fi está transmitiendo datos. Usar GPIO 34 permite medir luz en tiempo real sin interferencias con la red.
+#### B. La Resistencia del Sensor de Luz (LDR en pin D34):
+1. Una pata del LDR va a **3V3**.
+2. La otra pata del LDR va al pin **D34** del ESP32.
+3. Desde esa misma pata conectada a **D34**, coloca una resistencia de **10 kΩ** (Marrón - Negro - Naranja) que vaya a **GND**.
