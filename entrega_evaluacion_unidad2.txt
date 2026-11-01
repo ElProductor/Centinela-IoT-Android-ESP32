@@ -1,0 +1,100 @@
+================================================================================
+INACAP SEDE PUERTO MONTT - DIRECCIÓN DE INFORMÁTICA Y TELECOMUNICACIONES
+ASIGNATURA: APLICACIONES MÓVILES PARA IOT (TI3042)
+EVALUACIÓN SUMATIVA UNIDAD 2 (25%)
+================================================================================
+
+PROYECTO:
+Centinela-IoT: Nodo de Seguridad Edge Multiparamétrico y ESP32 Universal Hub
+
+INTEGRANTES:
+- Juan Pablo Villavicencio
+- Daryl Izquierdo
+- Antonio Benedetti
+
+DOCENTE:
+Rodrigo Arturo Ruiz Hess
+
+FECHA DE ENTREGA:
+Octubre / Noviembre 2026
+
+================================================================================
+1. ENLACE OFICIAL AL REPOSITORIO DE GITHUB
+================================================================================
+
+Repositorio GitHub (Código Fuente Completo, APK y Firmware):
+https://github.com/<TU_USUARIO>/Centinela-IoT-Android-ESP32
+
+(Reemplace <TU_USUARIO> por el nombre de usuario de su cuenta de GitHub donde subió el proyecto)
+
+================================================================================
+2. ARCHIVO EJECUTABLE COMPILADO (APK ANDROID)
+================================================================================
+
+- Archivo APK en la raíz del repositorio: CentinelaIoT_Universal_ESP32.apk
+- Ruta de compilación local: app/build/outputs/apk/debug/app-debug.apk
+- Plataforma mínima: Android 8.0 Oreo (API 26) hasta Android 15 (API 35)
+- Arquitectura: Kotlin Nativo, Material Design 3, ViewBinding, ViewModel MVVM con Corrutinas
+
+================================================================================
+3. CREDENCIALES DE ACCESO AL SISTEMA (LOGIN CRIPTOGRÁFICO - ISO 27400)
+================================================================================
+
+La aplicación implementa control de acceso basado en roles (RBAC) con derivación
+criptográfica SHA-256 + Salt único de 16 bytes y almacenamiento en base de datos SQLite.
+
++-------------------+----------------+-----------+----------------------------------------------+
+| Usuario           | Contraseña     | Rol       | Permisos Operacionales OT                    |
++-------------------+----------------+-----------+----------------------------------------------+
+| admin             | admin123       | ADMIN     | Control total: Apertura remota de emergencia,|
+|                   |                |           | armar/desarmar, cambio de umbrales/IP y      |
+|                   |                |           | purga de logs de auditoría.                  |
++-------------------+----------------+-----------+----------------------------------------------+
+| operador          | inacap2026     | OPERATOR  | Control de planta: Armar/desarmar perímetro, |
+|                   |                |           | silenciar alarma sonora y ver telemetría.    |
++-------------------+----------------+-----------+----------------------------------------------+
+| auditor           | auditor123     | MONITOR   | Solo lectura: Inspección de telemetría y     |
+|                   |                |           | verificación de registros de auditoría.      |
++-------------------+----------------+-----------+----------------------------------------------+
+* Nota: La pantalla de Login incluye 3 botones de acceso rápido para agilizar la evaluación en aula.
+
+================================================================================
+4. RESUMEN DE CUMPLIMIENTO DE CRITERIOS DE EVALUACIÓN
+================================================================================
+
+[CRITERIO 2.1.1] Desarrollo en Android Studio con Kotlin:
+- Desarrollado 100% en Kotlin con arquitectura MVVM (Model-View-ViewModel).
+- Interfaz gráfica adaptativa bajo Material Design 3 con modo oscuro industrial de alto contraste.
+- Cuatro pantallas funcionales: Login Criptográfico, Dashboard Centinela, ESP32 Universal Hub
+  (control de cualquier GPIO digital, PWM y telemetría analógica) y Visor de Auditoría Forense.
+
+[CRITERIO 2.1.2] Enlaces Inalámbricos y Comunicación con ESP32:
+- Integración Wi-Fi mediante cliente Retrofit 2 + OkHttp consumiendo endpoints REST JSON (/telemetria y /comando).
+- Tolerancia a caídas WAN: El firmware ESP32 implementa conmutación automática a modo contingencia
+  SoftAP ("ESP32_CENTINELA_AP" en 192.168.4.1) cuando no hay router disponible.
+
+[CRITERIO 2.1.3] Seguridad bajo Norma Internacional ISO/IEC 27400:2022 y Lineamientos OT:
+- Autenticación criptográfica con Salt aleatorio y hashing SHA-256 antes de permitir cualquier operación.
+- Registro inmutable de auditoría (Audit Trail) en SQLite que guarda cada intrusión (< 50 cm),
+  apertura de emergencia remota, desarme tripartito físico y cambio de configuración.
+- Tokens de sesión efímeros de 60 minutos con expiración automática.
+
+[CRITERIO 2.1.4] Sincronización Multi-Dispositivo y Modo Simulación para Defensa:
+- Sincronización en tiempo real entre múltiples terminales Android conectados a la misma red o AP.
+- Simulador de Firmware ESP32 Embebido en la App: Permite demostrar todos los casos de uso
+  (intrusión ultrasónica, detección de luz LDR, pulsador físico y apertura remota) directamente
+  en el aula sin necesidad de tener el hardware físico conectado.
+
+================================================================================
+5. ESQUEMA DE CONEXIÓN FÍSICA AL MICROCONTROLADOR (ESP32-WROOM-32)
+================================================================================
+
+- GPIO 5  (D5)  -> Trigger del Sensor Ultrasónico HC-SR04
+- GPIO 18 (D18) -> Echo del HC-SR04 (con divisor de voltaje 1k/2k a 3.3V)
+- GPIO 34 (D34) -> Fotorresistencia LDR GL5528 (Divisor con R 10k a GND)
+- GPIO 13 (D13) -> Servomotor SG90 (Pestillo Perimetral - Canal PWM)
+- GPIO 14 (D14) -> Zumbador Pasivo / Buzzer (Alarma 2000 Hz)
+- GPIO 4  (D4)  -> Pulsador Físico de Desarme (INPUT_PULLUP a GND)
+- VIN / 5V      -> Alimentación 5V para HC-SR04 y SG90
+- 3V3           -> Alimentación 3.3V para LDR
+- GND           -> Tierra común compartida
