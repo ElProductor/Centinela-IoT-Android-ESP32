@@ -23,9 +23,7 @@ Octubre / Noviembre 2026
 ================================================================================
 
 Repositorio GitHub (Código Fuente Completo, APK y Firmware):
-https://github.com/<TU_USUARIO>/Centinela-IoT-Android-ESP32
-
-(Reemplace <TU_USUARIO> por el nombre de usuario de su cuenta de GitHub donde subió el proyecto)
+https://github.com/ElProductor/Centinela-IoT-Android-ESP32
 
 ================================================================================
 2. ARCHIVO EJECUTABLE COMPILADO (APK ANDROID)
