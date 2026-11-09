@@ -563,4 +563,8 @@ class DatabaseHelper(context: Context) :
         }
         writableDatabase.update(TABLE_WIDGETS, values, "$COL_WIDGET_ID = ?", arrayOf(widgetId.toString()))
     }
+
+    fun deleteWidget(widgetId: Long): Boolean {
+        return writableDatabase.delete(TABLE_WIDGETS, "$COL_WIDGET_ID = ?", arrayOf(widgetId.toString())) > 0
+    }
 }

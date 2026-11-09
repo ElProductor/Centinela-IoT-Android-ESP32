@@ -188,4 +188,51 @@ class MainViewModel : ViewModel() {
             loadWidgets()
         }
     }
+
+    fun deleteWidget(widgetId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.deleteWidget(widgetId)
+            loadWidgets()
+        }
+    }
+
+    fun triggerPanic() {
+        sendCommand("panico")
+    }
+
+    fun triggerCourtesyUnlock() {
+        sendCommand("cortesia")
+    }
+
+    fun triggerBist(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            if (session.isSimulatorActive) {
+                val resp = Esp32VirtualSimulator.executeCommand(CommandRequest(comando = "bist"))
+                recordAudit("HARDWARE_BIST", "Autodiagnóstico BIST ejecutado en simulador Edge", "INFO")
+                onResult(resp.mensaje)
+            } else {
+                try {
+                    val service = NetworkClient.getService(session.baseUrl)
+                    val resp = service.sendComando(CommandRequest(comando = "bist", usuario = session.username), "Bearer ${session.token}")
+                    val msg = resp.body()?.mensaje ?: "BIST completado"
+                    recordAudit("HARDWARE_BIST", "Autodiagnóstico BIST ejecutado en ESP32 físico", "INFO")
+                    onResult(msg)
+                } catch (e: Exception) {
+                    onResult("Error al ejecutar BIST: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun triggerBeacon() {
+        sendCommand("baliza")
+    }
+
+    fun triggerHvac() {
+        sendCommand("hvac")
+    }
+
+    fun triggerReboot() {
+        sendCommand("reiniciar")
+    }
 }

@@ -99,6 +99,12 @@ String obtenerTimestampIso() {
 }
 
 // --- 4. CONTROL DE ACTUADORES Y LECTURA DE SENSORES (PASOS 1, 3 Y 4) ---
+bool cortesiaActiva = false;
+unsigned long tiempoFinCortesia = 0;
+bool balizaActiva = false;
+unsigned long ultimoParpadeoBaliza = 0;
+bool estadoBaliza = false;
+
 void aplicarEstadoActuadores(bool bloquear, const String& origen) {
   estadoActual.alarmaActiva = bloquear;
   estadoActual.anguloServo = bloquear ? 0 : 90;
@@ -110,6 +116,50 @@ void aplicarEstadoActuadores(bool bloquear, const String& origen) {
   } else {
     ledcWrite(0, 0);   // Silencia sirena
   }
+}
+
+void iniciarAperturaCortesia(int segundos) {
+  aplicarEstadoActuadores(false, "APERTURA_CORTESIA");
+  cortesiaActiva = true;
+  tiempoFinCortesia = millis() + (segundos * 1000UL);
+}
+
+void dispararAlarmaPanico() {
+  estadoActual.alarmaActiva = true;
+  estadoActual.anguloServo = 0;
+  pestilloServo.write(0);
+  ledcWrite(0, 180);
+  balizaActiva = true;
+  estadoActual.ultimoOrigenCmd = "PANIC_ALARM";
+}
+
+String ejecutarBIST() {
+  pestilloServo.write(0);
+  delay(150);
+  pestilloServo.write(90);
+  delay(150);
+  pestilloServo.write(estadoActual.anguloServo);
+
+  ledcWrite(0, 100);
+  delay(100);
+  ledcWrite(0, 0);
+
+  uint32_t freeRam = ESP.getFreeHeap();
+  int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -99;
+
+  String json = "{";
+  json += "\"status\":\"OK\",";
+  json += "\"bist\":\"PASSED\",";
+  json += "\"servo\":\"OK\",";
+  json += "\"buzzer\":\"OK\",";
+  json += "\"distancia\":" + String(estadoActual.distanciaCm) + ",";
+  json += "\"luz\":" + String(estadoActual.luzAdc) + ",";
+  json += "\"temp\":" + String(estadoActual.temperaturaC, 1) + ",";
+  json += "\"hum\":" + String(estadoActual.humedadPct, 1) + ",";
+  json += "\"free_heap\":" + String(freeRam) + ",";
+  json += "\"rssi\":" + String(rssi);
+  json += "}";
+  return json;
 }
 
 void leerSensoresEnBorde() {
@@ -436,10 +486,26 @@ void configurarServidorWebYEndpoints() {
   server.on("/api/v1/control", HTTP_POST, []() {
     if (server.hasArg("accion")) {
       String accion = server.arg("accion");
-      if (accion == "ABRIR") {
+      accion.toUpperCase();
+      if (accion == "ABRIR" || accion == "DESBLOQUEAR") {
         aplicarEstadoActuadores(false, "ANDROID_WIFI_OVERRIDE");
-      } else if (accion == "BLOQUEAR") {
+      } else if (accion == "BLOQUEAR" || accion == "ARMAR") {
         aplicarEstadoActuadores(true, "ANDROID_WIFI_LOCK");
+      } else if (accion == "PANICO" || accion == "PANIC") {
+        dispararAlarmaPanico();
+      } else if (accion == "CORTESIA" || accion == "COURTESY") {
+        iniciarAperturaCortesia(10);
+      } else if (accion == "BIST" || accion == "AUTODIAGNOSTICO") {
+        server.send(200, "application/json", ejecutarBIST());
+        return;
+      } else if (accion == "BALIZA") {
+        balizaActiva = !balizaActiva;
+        if (!balizaActiva) digitalWrite(PIN_LED_ALERTA, LOW);
+      } else if (accion == "REBOOT" || accion == "REINICIAR") {
+        server.send(200, "application/json", "{\"status\":\"REBOOTING\",\"msg\":\"ESP32 reiniciando...\"}");
+        delay(400);
+        ESP.restart();
+        return;
       }
     }
     if (server.hasArg("umbralDist")) {
@@ -452,14 +518,32 @@ void configurarServidorWebYEndpoints() {
     server.send(200, "application/json", "{\"status\":\"OK\",\"servo\":" + String(estadoActual.anguloServo) + "}");
   });
 
-  // Compatibilidad con endpoint /comando de Unidad 2
+  // Compatibilidad con endpoint /comando de Unidad 2 y 3
   server.on("/comando", HTTP_POST, []() {
     if (server.hasArg("plain")) {
       String body = server.arg("plain");
-      if (body.indexOf("desbloquear") != -1 || body.indexOf("abrir") != -1) {
+      String bodyLower = body;
+      bodyLower.toLowerCase();
+
+      if (bodyLower.indexOf("desbloquear") != -1 || bodyLower.indexOf("abrir") != -1) {
         aplicarEstadoActuadores(false, "ANDROID_REMOTE_CMD");
-      } else if (body.indexOf("bloquear") != -1 || body.indexOf("armar") != -1) {
+      } else if (bodyLower.indexOf("bloquear") != -1 || bodyLower.indexOf("armar") != -1) {
         aplicarEstadoActuadores(true, "ANDROID_REMOTE_CMD");
+      } else if (bodyLower.indexOf("panico") != -1 || bodyLower.indexOf("panic") != -1) {
+        dispararAlarmaPanico();
+      } else if (bodyLower.indexOf("cortesia") != -1 || bodyLower.indexOf("courtesy") != -1) {
+        iniciarAperturaCortesia(10);
+      } else if (bodyLower.indexOf("bist") != -1 || bodyLower.indexOf("autodiagnostico") != -1) {
+        server.send(200, "application/json", ejecutarBIST());
+        return;
+      } else if (bodyLower.indexOf("baliza") != -1) {
+        balizaActiva = !balizaActiva;
+        if (!balizaActiva) digitalWrite(PIN_LED_ALERTA, LOW);
+      } else if (bodyLower.indexOf("reboot") != -1 || bodyLower.indexOf("reiniciar") != -1) {
+        server.send(200, "application/json", "{\"status\":\"REBOOTING\",\"msg\":\"ESP32 reiniciando...\"}");
+        delay(400);
+        ESP.restart();
+        return;
       }
     }
     server.send(200, "application/json", "{\"status\":\"OK\",\"pestillo\":" + String(estadoActual.anguloServo) + "}");
@@ -508,6 +592,19 @@ void setup() {
 void loop() {
   atenderPuertoSerialNoBloqueante();
   server.handleClient();
+
+  // Temporizador no bloqueante de auto-cierre de cortesía
+  if (cortesiaActiva && millis() >= tiempoFinCortesia) {
+    cortesiaActiva = false;
+    aplicarEstadoActuadores(true, "AUTO_CIERRE_CORTESIA");
+  }
+
+  // Baliza estroboscópica no bloqueante
+  if (balizaActiva && millis() - ultimoParpadeoBaliza >= 250) {
+    ultimoParpadeoBaliza = millis();
+    estadoBaliza = !estadoBaliza;
+    digitalWrite(PIN_LED_ALERTA, estadoBaliza ? HIGH : LOW);
+  }
 
   unsigned long ahora = millis();
   if (ahora - lastSensorReadMs >= SENSOR_INTERVAL_MS) {

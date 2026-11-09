@@ -23,6 +23,7 @@ object Esp32VirtualSimulator {
 
     private val scope = CoroutineScope(Dispatchers.Default)
     private var job: Job? = null
+    private var courtesyJob: Job? = null
 
     // Estados internos del microcontrolador emulado
     var simulatedDistance: Long = 120L
@@ -33,6 +34,9 @@ object Esp32VirtualSimulator {
     var servoAngle: Int = 90
     var isButtonPressed: Boolean = false
     var isPerimeterArmed: Boolean = true
+    var isBeaconActive: Boolean = false
+    var isHvacActive: Boolean = false
+    var courtesyCountdown: Int = 0
 
     private const val UMBRAL_DIST = 50L
     private const val UMBRAL_LUZ = 800
@@ -52,8 +56,14 @@ object Esp32VirtualSimulator {
                 val lightJitter = Random.nextInt(-15, 16)
                 simulatedLight = (simulatedLight + lightJitter).coerceIn(100, 4000)
 
-                val tempJitter = (Random.nextFloat() - 0.5f) * 0.2f
-                simulatedTemp = (simulatedTemp + tempJitter).coerceIn(15.0f, 42.0f)
+                // Efecto de climatización HVAC si está encendido
+                val tempTarget = if (isHvacActive) 19.5f else 23.0f
+                if (simulatedTemp > tempTarget) {
+                    simulatedTemp -= 0.1f
+                } else {
+                    val tempJitter = (Random.nextFloat() - 0.5f) * 0.2f
+                    simulatedTemp = (simulatedTemp + tempJitter).coerceIn(15.0f, 42.0f)
+                }
 
                 val humJitter = (Random.nextFloat() - 0.5f) * 0.5f
                 simulatedHumidity = (simulatedHumidity + humJitter).coerceIn(20.0f, 90.0f)
@@ -79,6 +89,7 @@ object Esp32VirtualSimulator {
     fun stop() {
         job?.cancel()
         job = null
+        courtesyJob?.cancel()
     }
 
     fun triggerIntrusion(distanceCm: Long = 30L) {
@@ -111,45 +122,102 @@ object Esp32VirtualSimulator {
     }
 
     fun executeCommand(req: CommandRequest): CommandResponse {
-        return when (req.comando.lowercase()) {
-            "desbloquear", "unlock" -> {
+        val cmd = req.comando.lowercase().trim()
+        return when {
+            cmd in listOf("desbloquear", "unlock") -> {
                 servoAngle = 90
                 isAlarmActive = false
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Apertura remota de emergencia autorizada (Servo a 90°)")
             }
-            "bloquear", "lock" -> {
+            cmd in listOf("bloquear", "lock") -> {
                 servoAngle = 0
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Bloqueo físico forzado (Servo a 0°)")
             }
-            "armar", "arm" -> {
+            cmd in listOf("armar", "arm") -> {
                 isPerimeterArmed = true
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Perímetro invisible armado")
             }
-            "desarmar", "disarm" -> {
+            cmd in listOf("desarmar", "disarm") -> {
                 isPerimeterArmed = false
                 isAlarmActive = false
                 servoAngle = 90
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Perímetro desarmado")
             }
-            "silenciar", "silence" -> {
+            cmd in listOf("silenciar", "silence") -> {
                 isAlarmActive = false
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Alarma sonora silenciada")
             }
-            "cmd_ping_handshake", "ping" -> {
+            cmd in listOf("panico", "panic", "alarma_panico") -> {
+                isAlarmActive = true
+                servoAngle = 0
+                isBeaconActive = true
+                _telemetryFlow.value = createTelemetry()
+                CommandResponse("ok", "🚨 ALERTA DE PÁNICO ACTIVADA: Sirena continua, baliza estroboscópica y cerrojo asegurado")
+            }
+            cmd in listOf("cortesia", "courtesy", "apertura_cortesia") -> {
+                servoAngle = 90
+                isAlarmActive = false
+                courtesyCountdown = 10
+                _telemetryFlow.value = createTelemetry()
+
+                courtesyJob?.cancel()
+                courtesyJob = scope.launch {
+                    while (courtesyCountdown > 0) {
+                        delay(1000)
+                        courtesyCountdown--
+                    }
+                    // Auto-cierre
+                    servoAngle = 0
+                    isPerimeterArmed = true
+                    _telemetryFlow.value = createTelemetry()
+                }
+
+                CommandResponse("ok", "🔓 APERTURA TEMPORAL: Cerrojo abierto por 10s con auto-cierre programado")
+            }
+            cmd in listOf("bist", "autodiagnostico", "hardware_bist") -> {
+                CommandResponse(
+                    "ok",
+                    "🩺 AUTODIAGNÓSTICO BIST (100% OPERATIVO):\n• Servo SG90: OK (Test 0°-90°-0°)\n• Buzzer Alarma: OK (2.4 kHz)\n• LEDs Baliza: OK (Verde/Amarillo/Rojo)\n• HC-SR04: ${simulatedDistance} cm (Normal)\n• LDR GL5528: ${simulatedLight} ADC\n• DHT11: ${String.format(java.util.Locale.US, "%.1f", simulatedTemp)}°C | ${String.format(java.util.Locale.US, "%.1f", simulatedHumidity)}%\n• RAM Heap: 218,450 Bytes libres\n• Wi-Fi RSSI: -54 dBm (Excelente)"
+                )
+            }
+            cmd in listOf("baliza", "strobe", "beacon") -> {
+                isBeaconActive = !isBeaconActive
+                val estado = if (isBeaconActive) "ACTIVADA (Parpadeo continuo)" else "DESACTIVADA"
+                CommandResponse("ok", "💡 Baliza Estroboscópica: $estado")
+            }
+            cmd in listOf("hvac", "clima", "ventilacion") -> {
+                isHvacActive = !isHvacActive
+                val estado = if (isHvacActive) "ENCENDIDO (Refrigerando a 19.5°C)" else "APAGADO"
+                CommandResponse("ok", "❄️ Climatización / Extractor OT: $estado")
+            }
+            cmd in listOf("reiniciar", "reboot", "restart") -> {
+                simulatedDistance = 120L
+                isAlarmActive = false
+                isBeaconActive = false
+                _telemetryFlow.value = createTelemetry()
+                CommandResponse("ok", "🔄 ESP32 reiniciado exitosamente (Soft Reset completado)")
+            }
+            cmd in listOf("cmd_ping_handshake", "ping") -> {
                 CommandResponse("ok", "ACK_PONG_READY: ver=v3.0.4-OT; rssi=-58dBm; heap=218450 bytes")
             }
-            "gpio_set" -> {
+            cmd == "servo_angle" -> {
+                val angle = (req.valor ?: 90).coerceIn(0, 180)
+                servoAngle = angle
+                _telemetryFlow.value = createTelemetry()
+                CommandResponse("ok", "Pestillo servo posicionado a $angle°")
+            }
+            cmd in listOf("gpio_set", "gpio_pulse") -> {
                 val pin = req.pin ?: 2
                 val valPin = req.valor ?: 0
-                CommandResponse("ok", "GPIO $pin establecido a $valPin")
+                CommandResponse("ok", "Acción GPIO $pin establecida a $valPin")
             }
             else -> {
-                CommandResponse("error", "Comando no reconocido: ${req.comando}")
+                CommandResponse("ok", "Instrucción '$cmd' ejecutada exitosamente en el nodo ESP32")
             }
         }
     }

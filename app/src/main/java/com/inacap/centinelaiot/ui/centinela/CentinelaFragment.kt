@@ -187,6 +187,43 @@ class CentinelaFragment : Fragment() {
             viewModel.sendCommand("silenciar")
         }
 
+        // --- Acciones Rápidas OT del ESP32 ---
+        binding.btnQuickPanicMain.setOnClickListener {
+            if (!sessionManager.canDisarm(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Se requiere rol de Operador u Administrador", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            viewModel.triggerPanic()
+            Toast.makeText(requireContext(), "🚨 Alarma de Pánico Activada en ESP32", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnQuickCourtesyMain.setOnClickListener {
+            if (!sessionManager.canRemoteOpen(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Se requiere permiso de Apertura Remota", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            viewModel.triggerCourtesyUnlock()
+            Toast.makeText(requireContext(), "🔓 Apertura de Cortesía iniciada (Auto-cierre en 10s)", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.btnQuickBistMain.setOnClickListener {
+            Toast.makeText(requireContext(), "Ejecutando prueba BIST de hardware en el ESP32...", Toast.LENGTH_SHORT).show()
+            viewModel.triggerBist { report ->
+                activity?.runOnUiThread {
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                        .setTitle("🩺 Diagnóstico BIST de Hardware (ESP32)")
+                        .setMessage(report)
+                        .setPositiveButton("ACEPTAR", null)
+                        .show()
+                }
+            }
+        }
+
+        binding.btnQuickBeaconMain.setOnClickListener {
+            viewModel.triggerBeacon()
+            Toast.makeText(requireContext(), "💡 Baliza Estroboscópica activada/desactivada", Toast.LENGTH_SHORT).show()
+        }
+
         // Controles de Simulación Interactiva
         binding.btnSimIntrusion.setOnClickListener {
             Esp32VirtualSimulator.triggerIntrusion(28)
