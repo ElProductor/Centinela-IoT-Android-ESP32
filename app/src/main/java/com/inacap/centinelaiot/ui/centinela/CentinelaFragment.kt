@@ -23,6 +23,7 @@ class CentinelaFragment : Fragment() {
     private val binding get() = _binding!!
     private val viewModel: MainViewModel by activityViewModels()
     private val sessionManager by lazy { CentinelaApp.instance.sessionManager }
+    private val dbHelper by lazy { CentinelaApp.instance.databaseHelper }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -145,8 +146,8 @@ class CentinelaFragment : Fragment() {
     private fun setupListeners() {
         // Apertura Remota de Emergencia (ISO 27400 Security Confirmation)
         binding.btnEmergencyUnlock.setOnClickListener {
-            if (!sessionManager.isOperator) {
-                Toast.makeText(requireContext(), "Acceso denegado: Se requiere rol de OPERADOR o ADMIN", Toast.LENGTH_LONG).show()
+            if (!sessionManager.canRemoteOpen(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Su rol no cuenta con privilegios de Apertura Remota", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             AlertDialog.Builder(requireContext())
@@ -161,6 +162,10 @@ class CentinelaFragment : Fragment() {
 
         // Armar / Desarmar
         binding.btnArmDisarm.setOnClickListener {
+            if (!sessionManager.canDisarm(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Su rol no cuenta con privilegios de Armar/Desarmar", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             val isAlarm = viewModel.telemetry.value?.alarmaActiva ?: false
             if (isAlarm) {
                 viewModel.sendCommand("desarmar")
@@ -171,6 +176,10 @@ class CentinelaFragment : Fragment() {
 
         // Silenciar Alarma
         binding.btnSilenceBuzzer.setOnClickListener {
+            if (!sessionManager.canDisarm(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Su rol no cuenta con privilegios de Desarme", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             viewModel.sendCommand("silenciar")
         }
 

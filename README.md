@@ -4,6 +4,7 @@
 [![Asignatura](https://img.shields.io/badge/TI3042-Aplicaciones%20M%C3%B3viles%20para%20IoT-blue.svg)]()
 [![Plataforma](https://img.shields.io/badge/Hardware-ESP32--WROOM--32-00E5FF.svg)]()
 [![Seguridad](https://img.shields.io/badge/Norma-ISO%2FIEC%2027400%3A2022-success.svg)]()
+[![Cloud BaaS](https://img.shields.io/badge/Supabase-PostgreSQL%20Cloud-3ECF8E.svg)](docs/INTEGRACION_SUPABASE_Y_ROLES.md)
 [![Android](https://img.shields.io/badge/Android%20Studio-Kotlin%20%7C%20Material%203-brightgreen.svg)]()
 
 > **Evaluación Sumativa Unidad 2 (25%)**  
@@ -29,14 +30,16 @@ Esta solución móvil integra dos componentes esenciales:
 1. **Módulo Centinela-IoT (Específico):** Supervisión y control perimetral en tiempo real del nodo de seguridad basado en ESP32 con procesamiento local (*Edge Computing*), sensor ultrasónico HC-SR04, fotorresistor LDR, pestillo servomotor SG90 y zumbador pasivo de 2 kHz.
 2. **ESP32 Universal Hub (Genérico):** Panel de control y telemetría universal para interactuar con **cualquier proyecto de ESP32**, permitiendo comandar pines GPIO digitales (relés, luces), sliders PWM (motores, servomotores), leer sensores analógicos y enviar/recibir comandos en bruto por consola serial.
 
+3. **Sincronización Cloud Supabase & Panel RBAC:** Integración con backend PostgreSQL en la nube (Supabase BaaS) mediante API REST PostgREST para sincronización de telemetría y auditoría, sumado a un **Panel de Administrador** para la creación y gestión dinámica de roles con permisos granulares (desarme, apertura remota, control GPIO, auditoría) y alta de operadores.
+
 ### Alineación con los Criterios de Evaluación (Unidad 2):
 * **2.1.1 (Herramientas y Diseño Android):** Desarrollada con **Android Studio y Kotlin**, siguiendo los lineamientos de diseño **Material Design 3 (M3)**, ViewBinding, ViewModel desacoplado y componentes industriales adaptativos.
-* **2.1.2 (Conexiones Inalámbricas):** Soporta conexión Wi-Fi mediante **API REST HTTP**, WebSockets y peticiones JSON asíncronas de telemetría y telemando hacia el microcontrolador ESP32 o servidor intermediario.
+* **2.1.2 (Conexiones Inalámbricas):** Soporta conexión Wi-Fi mediante **API REST HTTP**, WebSockets y peticiones JSON asíncronas de telemetría y telemando hacia el microcontrolador ESP32, servidor intermediario y **nube Supabase**.
 * **2.1.3 (Estándar ISO/IEC 27400:2022 de Seguridad IoT/OT):**
   - Autenticación segura obligatoria previa a cualquier operación.
   - Hashing criptográfico de contraseñas con **SHA-256 + Salt único** por usuario.
-  - Control de Acceso Basado en Roles (**ADMIN**, **OPERADOR**, **MONITOR**).
-  - Trazabilidad y **Registro Inmutable de Auditoría (*Audit Trail*)** en base de datos local SQLite que audita cada intrusión perimetral, apertura remota de emergencia, cambio de parámetros o inicio de sesión.
+  - Control de Acceso Basado en Roles Dinámico (**ADMIN**, **OPERADOR**, **MONITOR** y roles personalizados creados por el administrador).
+  - Trazabilidad y **Registro Inmutable de Auditoría (*Audit Trail*)** en base de datos local SQLite y respaldado en la nube Supabase.
 * **2.1.4 (Interconexión Multi-dispositivo):** Permite ser desplegada en dos o más dispositivos móviles Android sincronizados, compartiendo la telemetría en tiempo real del nodo.
 
 ---

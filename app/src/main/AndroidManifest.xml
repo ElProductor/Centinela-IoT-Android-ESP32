@@ -47,6 +47,12 @@
             android:exported="false"
             android:windowSoftInputMode="adjustPan" />
 
+        <!-- Panel de Administración de Roles (RBAC) y Usuarios -->
+        <activity
+            android:name=".ui.admin.AdminManagementActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
     </application>
 
 </manifest>

@@ -46,7 +46,8 @@ class MainActivity : AppCompatActivity() {
         val roleColor = when (sessionManager.role.uppercase()) {
             "ADMIN" -> ContextCompat.getColor(this, R.color.primary)
             "OPERATOR" -> ContextCompat.getColor(this, R.color.secondary)
-            else -> ContextCompat.getColor(this, R.color.text_secondary)
+            "MONITOR" -> ContextCompat.getColor(this, R.color.text_secondary)
+            else -> ContextCompat.getColor(this, R.color.status_warning)
         }
         binding.tvRoleBadge.setTextColor(roleColor)
     }

@@ -33,6 +33,7 @@ class UniversalHubFragment : Fragment() {
     private val binding get() = _binding!!
     private val viewModel: MainViewModel by activityViewModels()
     private val sessionManager by lazy { CentinelaApp.instance.sessionManager }
+    private val dbHelper by lazy { CentinelaApp.instance.databaseHelper }
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     override fun onCreateView(
@@ -68,6 +69,10 @@ class UniversalHubFragment : Fragment() {
     private fun setupListeners() {
         // Enviar comando manual en texto o JSON
         binding.btnSendRawCommand.setOnClickListener {
+            if (!sessionManager.canUniversalGpio(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Su rol no cuenta con privilegios de comandos GPIO", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             val cmd = binding.etRawCommand.text.toString().trim()
             if (cmd.isNotEmpty()) {
                 val timestamp = timeFormat.format(Date())
@@ -82,6 +87,10 @@ class UniversalHubFragment : Fragment() {
         }
 
         binding.btnAddWidget.setOnClickListener {
+            if (!sessionManager.canUniversalGpio(dbHelper)) {
+                Toast.makeText(requireContext(), "Acceso denegado: Se requiere permiso para configurar widgets GPIO", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             showAddWidgetDialog()
         }
     }

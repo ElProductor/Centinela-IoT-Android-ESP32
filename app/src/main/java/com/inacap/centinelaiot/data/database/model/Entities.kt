@@ -1,5 +1,17 @@
 package com.inacap.centinelaiot.data.database.model
 
+data class Role(
+    val name: String,
+    val description: String = "",
+    val canDisarm: Boolean = false,
+    val canRemoteOpen: Boolean = false,
+    val canUniversalGpio: Boolean = false,
+    val canManageUsers: Boolean = false,
+    val canViewAudit: Boolean = true,
+    val isSystem: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 data class User(
     val id: Long = 0,
     val username: String,
@@ -7,7 +19,8 @@ data class User(
     val salt: String,
     val role: String,
     val fullName: String,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val isSynced: Boolean = false
 )
 
 data class AuditLog(

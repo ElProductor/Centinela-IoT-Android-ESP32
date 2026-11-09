@@ -10,6 +10,9 @@ class CentinelaApp : Application() {
     lateinit var database: DatabaseHelper
         private set
 
+    val databaseHelper: DatabaseHelper
+        get() = database
+
     lateinit var sessionManager: SessionManager
         private set
 
