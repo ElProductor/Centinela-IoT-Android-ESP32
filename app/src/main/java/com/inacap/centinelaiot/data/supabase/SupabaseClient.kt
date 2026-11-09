@@ -24,23 +24,25 @@ object SupabaseClient {
     private var lastUrl: String = ""
     private var lastKey: String = ""
 
-    private fun sanitizeUrl(rawUrl: String): String {
+    fun sanitizeUrl(rawUrl: String): String {
         var clean = rawUrl.trim()
         if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
             clean = "https://$clean"
         }
-        if (!clean.endsWith("/")) {
-            clean = "$clean/"
+        clean = clean.removeSuffix("/")
+        if (clean.endsWith("/rest/v1")) {
+            clean = clean.removeSuffix("/rest/v1")
         }
-        return clean
+        return "${clean.removeSuffix("/")}/"
     }
 
     @Synchronized
     fun getService(rawUrl: String, apiKey: String): SupabaseApiService? {
         if (rawUrl.isBlank() || apiKey.isBlank()) return null
         val cleanUrl = sanitizeUrl(rawUrl)
+        val cleanKey = apiKey.trim()
 
-        if (currentService != null && cleanUrl == lastUrl && apiKey == lastKey) {
+        if (currentService != null && cleanUrl == lastUrl && cleanKey == lastKey) {
             return currentService
         }
 
@@ -49,13 +51,13 @@ object SupabaseClient {
         }
 
         val okHttpClient = OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
-            .writeTimeout(8, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
-                    .header("apikey", apiKey.trim())
-                    .header("Authorization", "Bearer ${apiKey.trim()}")
+                    .header("apikey", cleanKey)
+                    .header("Authorization", "Bearer $cleanKey")
                     .header("Content-Type", "application/json")
                     .build()
                 chain.proceed(request)
@@ -70,7 +72,7 @@ object SupabaseClient {
             .build()
 
         lastUrl = cleanUrl
-        lastKey = apiKey
+        lastKey = cleanKey
         currentService = retrofit.create(SupabaseApiService::class.java)
         return currentService
     }
@@ -84,19 +86,20 @@ object SupabaseClient {
                 val service = getService(rawUrl, apiKey)
                     ?: return@withContext Pair(false, "URL o API Key vacíos")
 
-                val response = service.pingRoot()
-                if (response.isSuccessful || response.code() == 404 || response.code() == 200) {
-                    // Intenta consultar la tabla roles
-                    val rolesResp = service.getRoles()
-                    if (rolesResp.isSuccessful) {
-                        val count = rolesResp.body()?.size ?: 0
-                        return@withContext Pair(true, "Conexión exitosa a Supabase ($count roles encontrados)")
-                    } else if (rolesResp.code() == 404 || rolesResp.code() == 401) {
-                        return@withContext Pair(true, "Servidor alcanzable. Recuerda ejecutar el script SQL para crear las tablas")
+                val rolesResp = service.getRoles()
+                if (rolesResp.isSuccessful) {
+                    val count = rolesResp.body()?.size ?: 0
+                    Pair(true, "Conexión exitosa a Supabase ($count roles encontrados en la nube)")
+                } else when (rolesResp.code()) {
+                    404 -> Pair(false, "Servidor alcanzado, pero la tabla 'roles' no existe. Ejecuta el script SQL en Supabase.")
+                    401, 403 -> {
+                        val err = rolesResp.errorBody()?.string() ?: ""
+                        Pair(false, "Error de permisos (HTTP ${rolesResp.code()}): Verifica tu Publishable Key o RLS ($err)")
                     }
-                    return@withContext Pair(true, "Conectado a Supabase (HTTP ${rolesResp.code()})")
-                } else {
-                    return@withContext Pair(false, "Error de respuesta HTTP ${response.code()}: ${response.message()}")
+                    else -> {
+                        val err = rolesResp.errorBody()?.string() ?: rolesResp.message()
+                        Pair(false, "Error Supabase (HTTP ${rolesResp.code()}): $err")
+                    }
                 }
             } catch (e: Exception) {
                 Pair(false, "Fallo de conexión: ${e.localizedMessage ?: e.message}")
@@ -136,8 +139,13 @@ object SupabaseClient {
                     isSystem = lr.isSystem,
                     createdAt = lr.createdAt
                 )
-                service.upsertRole(dto)
-                rolesSynced++
+                val resp = service.upsertRole(dto)
+                if (resp.isSuccessful) {
+                    rolesSynced++
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    return@withContext Pair(false, "Error al subir rol '${lr.name}' (HTTP ${resp.code()}): $err")
+                }
             }
 
             // Descargar roles de Supabase que no estén locales
@@ -173,8 +181,13 @@ object SupabaseClient {
                     fullName = lu.fullName,
                     createdAt = lu.createdAt
                 )
-                service.upsertUser(uDto)
-                usersSynced++
+                val resp = service.upsertUser(uDto)
+                if (resp.isSuccessful) {
+                    usersSynced++
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    return@withContext Pair(false, "Error al subir usuario '@${lu.username}' (HTTP ${resp.code()}): $err")
+                }
             }
 
             // Descargar usuarios remotos
@@ -183,10 +196,9 @@ object SupabaseClient {
                 remoteUsersResp.body()?.forEach { ru ->
                     val exists = localUsers.any { it.username.equals(ru.username, ignoreCase = true) }
                     if (!exists) {
-                        // Guardar usuario descargado directamente en SQLite
                         dbHelper.insertUser(
                             user = ru.username,
-                            pass = "tempPassword", // se sobreescribe con el hash remoto
+                            pass = "tempPassword",
                             role = ru.role,
                             fullName = ru.fullName
                         )
@@ -195,7 +207,7 @@ object SupabaseClient {
             }
 
             // 3. Subir Logs de Auditoría locales a Supabase
-            val localLogs = dbHelper.getAllAuditLogs().take(25) // enviar los últimos 25
+            val localLogs = dbHelper.getAllAuditLogs().take(25)
             if (localLogs.isNotEmpty()) {
                 val dtoList = localLogs.map {
                     SupabaseAuditLogDto(
@@ -216,20 +228,27 @@ object SupabaseClient {
 
             Pair(
                 true,
-                "Sincronización completada: $rolesSynced roles, $usersSynced usuarios, $logsPushed logs enviados a la nube"
+                "Sincronización exitosa: $rolesSynced roles, $usersSynced usuarios, $logsPushed logs en la nube"
             )
         } catch (e: Exception) {
-            Pair(false, "Error durante sincronización: ${e.localizedMessage ?: e.message}")
+            Pair(false, "Error de red durante sincronización: ${e.localizedMessage ?: e.message}")
         }
     }
 
     /**
      * Sube un rol recién creado a Supabase de forma inmediata si está conectado.
      */
-    suspend fun pushRole(role: Role, sessionManager: SessionManager): Boolean =
+    suspend fun pushRole(role: Role, sessionManager: SessionManager): Pair<Boolean, String> =
         withContext(Dispatchers.IO) {
-            if (!sessionManager.isSupabaseEnabled) return@withContext false
-            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey) ?: return@withContext false
+            if (!sessionManager.isSupabaseEnabled) {
+                return@withContext Pair(false, "Sincronización con Supabase no activada en Ajustes")
+            }
+            if (sessionManager.supabaseUrl.isBlank() || sessionManager.supabaseKey.isBlank()) {
+                return@withContext Pair(false, "Faltan credenciales de Supabase en Ajustes")
+            }
+            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+                ?: return@withContext Pair(false, "No se pudo conectar con Supabase")
+
             return@withContext try {
                 val dto = SupabaseRoleDto(
                     name = role.name,
@@ -243,19 +262,31 @@ object SupabaseClient {
                     createdAt = role.createdAt
                 )
                 val resp = service.upsertRole(dto)
-                resp.isSuccessful
+                if (resp.isSuccessful) {
+                    Pair(true, "Rol '${role.name}' sincronizado con Supabase")
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    Pair(false, "Error Supabase (HTTP ${resp.code()}): $err")
+                }
             } catch (e: Exception) {
-                false
+                Pair(false, "Error de red al sincronizar rol: ${e.localizedMessage ?: e.message}")
             }
         }
 
     /**
      * Sube un usuario recién creado a Supabase de forma inmediata si está conectado.
      */
-    suspend fun pushUser(user: User, sessionManager: SessionManager): Boolean =
+    suspend fun pushUser(user: User, sessionManager: SessionManager): Pair<Boolean, String> =
         withContext(Dispatchers.IO) {
-            if (!sessionManager.isSupabaseEnabled) return@withContext false
-            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey) ?: return@withContext false
+            if (!sessionManager.isSupabaseEnabled) {
+                return@withContext Pair(false, "Sincronización con Supabase no activada en Ajustes")
+            }
+            if (sessionManager.supabaseUrl.isBlank() || sessionManager.supabaseKey.isBlank()) {
+                return@withContext Pair(false, "Faltan credenciales de Supabase en Ajustes")
+            }
+            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+                ?: return@withContext Pair(false, "No se pudo conectar con Supabase")
+
             return@withContext try {
                 val dto = SupabaseUserDto(
                     username = user.username,
@@ -266,9 +297,14 @@ object SupabaseClient {
                     createdAt = user.createdAt
                 )
                 val resp = service.upsertUser(dto)
-                resp.isSuccessful
+                if (resp.isSuccessful) {
+                    Pair(true, "Usuario '@${user.username}' sincronizado con Supabase")
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    Pair(false, "Error Supabase (HTTP ${resp.code()}): $err")
+                }
             } catch (e: Exception) {
-                false
+                Pair(false, "Error de red al sincronizar usuario: ${e.localizedMessage ?: e.message}")
             }
         }
 
@@ -281,8 +317,15 @@ object SupabaseClient {
             -- ESQUEMA POSTGRESQL PARA CENTINELA-IOT EN SUPABASE
             -- =========================================================
 
-            -- 1. Tabla de Roles Dinámicos (RBAC)
-            CREATE TABLE IF NOT EXISTS public.roles (
+            -- 1. Limpieza de tablas previas si se crearon vacías o incompatibles
+            DROP TABLE IF EXISTS public.sensores CASCADE;
+            DROP TABLE IF EXISTS public.telemetry CASCADE;
+            DROP TABLE IF EXISTS public.audit_logs CASCADE;
+            DROP TABLE IF EXISTS public.app_users CASCADE;
+            DROP TABLE IF EXISTS public.roles CASCADE;
+
+            -- 2. Tabla de Roles Dinámicos (RBAC)
+            CREATE TABLE public.roles (
                 name TEXT PRIMARY KEY,
                 description TEXT DEFAULT '',
                 can_disarm BOOLEAN DEFAULT false,
@@ -294,8 +337,8 @@ object SupabaseClient {
                 created_at BIGINT NOT NULL
             );
 
-            -- 2. Tabla de Usuarios con Hashes ISO 27400
-            CREATE TABLE IF NOT EXISTS public.app_users (
+            -- 3. Tabla de Usuarios con Hashes ISO 27400
+            CREATE TABLE public.app_users (
                 id BIGSERIAL PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
@@ -305,8 +348,8 @@ object SupabaseClient {
                 created_at BIGINT NOT NULL
             );
 
-            -- 3. Tabla de Auditoría Inmutable (Audit Trail)
-            CREATE TABLE IF NOT EXISTS public.audit_logs (
+            -- 4. Tabla de Auditoría Inmutable (Audit Trail)
+            CREATE TABLE public.audit_logs (
                 id BIGSERIAL PRIMARY KEY,
                 timestamp BIGINT NOT NULL,
                 event_type TEXT NOT NULL,
@@ -315,8 +358,8 @@ object SupabaseClient {
                 severity TEXT NOT NULL
             );
 
-            -- 4. Tabla de Telemetría Histórica ESP32
-            CREATE TABLE IF NOT EXISTS public.telemetry (
+            -- 5. Tabla de Telemetría Histórica ESP32
+            CREATE TABLE public.telemetry (
                 id BIGSERIAL PRIMARY KEY,
                 timestamp BIGINT NOT NULL,
                 distancia REAL NOT NULL,
@@ -326,8 +369,8 @@ object SupabaseClient {
                 modo TEXT NOT NULL
             );
 
-            -- 5. Tabla Unificada de Sensores OT (Unidad 3 - DHT11, HC-SR04, LDR)
-            CREATE TABLE IF NOT EXISTS public.sensores (
+            -- 6. Tabla Unificada de Sensores OT (Unidad 3 - DHT11, HC-SR04, LDR)
+            CREATE TABLE public.sensores (
                 id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 fechatoma TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
                 temperatura NUMERIC(5,2) NOT NULL,
@@ -338,7 +381,7 @@ object SupabaseClient {
                 operador_android TEXT DEFAULT 'ESP32_EDGE_NODE'
             );
 
-            -- Roles iniciales
+            -- Roles iniciales requeridos por el sistema
             INSERT INTO public.roles (name, description, can_disarm, can_remote_open, can_universal_gpio, can_manage_users, can_view_audit, is_system, created_at)
             VALUES 
                 ('ADMIN', 'Administrador Total OT', true, true, true, true, true, true, 1729000000000),
@@ -346,27 +389,27 @@ object SupabaseClient {
                 ('MONITOR', 'Auditor de Seguridad Solo Lectura', false, false, false, false, true, true, 1729000000000)
             ON CONFLICT (name) DO NOTHING;
 
-            -- Habilitar Políticas RLS públicas para Anon Key
+            -- Habilitar Políticas RLS públicas para Anon / Publishable Key
             ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.telemetry ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.sensores ENABLE ROW LEVEL SECURITY;
 
-            CREATE POLICY "Permitir acceso anónimo a roles" ON public.roles FOR ALL USING (true);
-            CREATE POLICY "Permitir acceso anónimo a usuarios" ON public.app_users FOR ALL USING (true);
-            CREATE POLICY "Permitir acceso anónimo a audit_logs" ON public.audit_logs FOR ALL USING (true);
-            CREATE POLICY "Permitir acceso anónimo a telemetría" ON public.telemetry FOR ALL USING (true);
+            DROP POLICY IF EXISTS "Permiso roles" ON public.roles;
+            CREATE POLICY "Permiso roles" ON public.roles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-            CREATE POLICY "Permitir insercion telemetria autenticada"
-            ON public.sensores FOR INSERT
-            TO anon, authenticated
-            WITH CHECK (temperatura BETWEEN -20 AND 85 AND humedad BETWEEN 0 AND 100);
+            DROP POLICY IF EXISTS "Permiso app_users" ON public.app_users;
+            CREATE POLICY "Permiso app_users" ON public.app_users FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
-            CREATE POLICY "Permitir lectura historial OT"
-            ON public.sensores FOR SELECT
-            TO anon, authenticated
-            USING (true);
+            DROP POLICY IF EXISTS "Permiso audit_logs" ON public.audit_logs;
+            CREATE POLICY "Permiso audit_logs" ON public.audit_logs FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+            DROP POLICY IF EXISTS "Permiso telemetry" ON public.telemetry;
+            CREATE POLICY "Permiso telemetry" ON public.telemetry FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+            DROP POLICY IF EXISTS "Permiso sensores" ON public.sensores;
+            CREATE POLICY "Permiso sensores" ON public.sensores FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
         """.trimIndent()
     }
 }

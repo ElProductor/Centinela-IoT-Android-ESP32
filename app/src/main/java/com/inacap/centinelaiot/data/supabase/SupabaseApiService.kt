@@ -12,14 +12,14 @@ interface SupabaseApiService {
     suspend fun getRoles(): Response<List<SupabaseRoleDto>>
 
     @Headers("Prefer: return=representation, resolution=merge-duplicates")
-    @POST("rest/v1/roles")
+    @POST("rest/v1/roles?on_conflict=name")
     suspend fun upsertRole(@Body role: SupabaseRoleDto): Response<List<SupabaseRoleDto>>
 
     @GET("rest/v1/app_users?select=*")
     suspend fun getUsers(): Response<List<SupabaseUserDto>>
 
     @Headers("Prefer: return=representation, resolution=merge-duplicates")
-    @POST("rest/v1/app_users")
+    @POST("rest/v1/app_users?on_conflict=username")
     suspend fun upsertUser(@Body user: SupabaseUserDto): Response<List<SupabaseUserDto>>
 
     @Headers("Prefer: return=minimal")

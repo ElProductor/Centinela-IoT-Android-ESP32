@@ -26,8 +26,15 @@ Para inicializar tu proyecto en Supabase:
 -- ESQUEMA POSTGRESQL PARA CENTINELA-IOT EN SUPABASE
 -- =========================================================
 
--- 1. Tabla de Roles Dinámicos (RBAC)
-CREATE TABLE IF NOT EXISTS public.roles (
+-- 1. Limpieza de tablas previas si se crearon vacías o incompatibles
+DROP TABLE IF EXISTS public.sensores CASCADE;
+DROP TABLE IF EXISTS public.telemetry CASCADE;
+DROP TABLE IF EXISTS public.audit_logs CASCADE;
+DROP TABLE IF EXISTS public.app_users CASCADE;
+DROP TABLE IF EXISTS public.roles CASCADE;
+
+-- 2. Tabla de Roles Dinámicos (RBAC)
+CREATE TABLE public.roles (
     name TEXT PRIMARY KEY,
     description TEXT DEFAULT '',
     can_disarm BOOLEAN DEFAULT false,
@@ -39,8 +46,8 @@ CREATE TABLE IF NOT EXISTS public.roles (
     created_at BIGINT NOT NULL
 );
 
--- 2. Tabla de Usuarios con Hashes Criptográficos (ISO 27400)
-CREATE TABLE IF NOT EXISTS public.app_users (
+-- 3. Tabla de Usuarios con Hashes Criptográficos (ISO 27400)
+CREATE TABLE public.app_users (
     id BIGSERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
@@ -50,8 +57,8 @@ CREATE TABLE IF NOT EXISTS public.app_users (
     created_at BIGINT NOT NULL
 );
 
--- 3. Tabla de Auditoría Inmutable (Audit Trail)
-CREATE TABLE IF NOT EXISTS public.audit_logs (
+-- 4. Tabla de Auditoría Inmutable (Audit Trail)
+CREATE TABLE public.audit_logs (
     id BIGSERIAL PRIMARY KEY,
     timestamp BIGINT NOT NULL,
     event_type TEXT NOT NULL,
@@ -60,8 +67,8 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     severity TEXT NOT NULL
 );
 
--- 4. Tabla de Telemetría Histórica ESP32
-CREATE TABLE IF NOT EXISTS public.telemetry (
+-- 5. Tabla de Telemetría Histórica ESP32
+CREATE TABLE public.telemetry (
     id BIGSERIAL PRIMARY KEY,
     timestamp BIGINT NOT NULL,
     distancia REAL NOT NULL,
@@ -69,6 +76,18 @@ CREATE TABLE IF NOT EXISTS public.telemetry (
     alarma_activa BOOLEAN NOT NULL,
     pestillo_abierto BOOLEAN NOT NULL,
     modo TEXT NOT NULL
+);
+
+-- 6. Tabla Unificada de Sensores OT (Unidad 3 - DHT11, HC-SR04, LDR)
+CREATE TABLE public.sensores (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    fechatoma TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    temperatura NUMERIC(5,2) NOT NULL,
+    humedad NUMERIC(5,2) NOT NULL,
+    distancia_cm INTEGER NOT NULL,
+    luz_adc INTEGER NOT NULL,
+    alarma_activa BOOLEAN DEFAULT FALSE NOT NULL,
+    operador_android TEXT DEFAULT 'ESP32_EDGE_NODE'
 );
 
 -- Roles de Fábrica Iniciales
@@ -84,12 +103,23 @@ ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.telemetry ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sensores ENABLE ROW LEVEL SECURITY;
 
--- Políticas de acceso para API Key anónima (Lectura y Escritura)
-CREATE POLICY "Permitir acceso anonimo a roles" ON public.roles FOR ALL USING (true);
-CREATE POLICY "Permitir acceso anonimo a usuarios" ON public.app_users FOR ALL USING (true);
-CREATE POLICY "Permitir acceso anonimo a audit_logs" ON public.audit_logs FOR ALL USING (true);
-CREATE POLICY "Permitir acceso anonimo a telemetria" ON public.telemetry FOR ALL USING (true);
+-- Políticas de acceso para API Key anónima / publishable (Lectura y Escritura)
+DROP POLICY IF EXISTS "Permiso roles" ON public.roles;
+CREATE POLICY "Permiso roles" ON public.roles FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permiso app_users" ON public.app_users;
+CREATE POLICY "Permiso app_users" ON public.app_users FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permiso audit_logs" ON public.audit_logs;
+CREATE POLICY "Permiso audit_logs" ON public.audit_logs FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permiso telemetry" ON public.telemetry;
+CREATE POLICY "Permiso telemetry" ON public.telemetry FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permiso sensores" ON public.sensores;
+CREATE POLICY "Permiso sensores" ON public.sensores FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 ```
 
 ---

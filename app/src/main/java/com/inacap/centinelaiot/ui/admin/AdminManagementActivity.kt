@@ -160,9 +160,9 @@ class AdminManagementActivity : AppCompatActivity() {
 
                 // Subir a Supabase en segundo plano si está configurado
                 lifecycleScope.launch {
-                    val pushed = SupabaseClient.pushRole(newRole, sessionManager)
-                    val msg = if (pushed) "Rol '$roleName' creado y sincronizado en Supabase" else "Rol '$roleName' creado en almacenamiento local"
-                    Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_SHORT).show()
+                    val (pushed, pushMsg) = SupabaseClient.pushRole(newRole, sessionManager)
+                    val msg = if (pushed) "Rol '$roleName' guardado y sincronizado en Supabase" else "Rol '$roleName' guardado localmente ($pushMsg)"
+                    Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_LONG).show()
                 }
 
                 loadData()
@@ -253,9 +253,9 @@ class AdminManagementActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     val userObj = dbHelper.getAllUsers().firstOrNull { it.username.equals(username, ignoreCase = true) }
                     if (userObj != null) {
-                        val pushed = SupabaseClient.pushUser(userObj, sessionManager)
-                        val msg = if (pushed) "Usuario '@$username' creado y sincronizado en Supabase" else "Usuario '@$username' creado en almacenamiento local"
-                        Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_SHORT).show()
+                        val (pushed, pushMsg) = SupabaseClient.pushUser(userObj, sessionManager)
+                        val msg = if (pushed) "Usuario '@$username' guardado y sincronizado en Supabase" else "Usuario '@$username' guardado localmente ($pushMsg)"
+                        Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_LONG).show()
                     }
                 }
 

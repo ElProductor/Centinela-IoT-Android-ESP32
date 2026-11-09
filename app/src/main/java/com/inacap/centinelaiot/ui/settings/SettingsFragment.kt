@@ -107,9 +107,12 @@ class SettingsFragment : Fragment() {
             val key = binding.etSupabaseKey.text.toString().trim()
 
             if (url.isBlank() || key.isBlank()) {
-                Toast.makeText(requireContext(), "Ingresa la URL y Anon Key de tu proyecto Supabase", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "Ingresa la URL y Publishable Key de tu proyecto Supabase", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
+
+            sessionManager.supabaseUrl = url
+            sessionManager.supabaseKey = key
 
             binding.tvSupabaseStatus.text = "Probando conexión con Supabase..."
             binding.tvSupabaseStatus.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
@@ -118,6 +121,8 @@ class SettingsFragment : Fragment() {
                 val (success, message) = SupabaseClient.testConnection(url, key)
                 binding.tvSupabaseStatus.text = message
                 val color = if (success) {
+                    sessionManager.isSupabaseEnabled = true
+                    binding.switchSupabaseSync.isChecked = true
                     ContextCompat.getColor(requireContext(), R.color.status_safe)
                 } else {
                     ContextCompat.getColor(requireContext(), R.color.status_alarm)
