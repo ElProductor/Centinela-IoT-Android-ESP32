@@ -19,6 +19,11 @@ interface Esp32ApiService {
         @Header("Authorization") token: String? = null
     ): Response<TelemetryResponse>
 
+    @GET("lecturas")
+    suspend fun getLecturas(
+        @Header("Authorization") token: String? = null
+    ): Response<TelemetryResponse>
+
     @POST("comando")
     suspend fun sendComando(
         @Body request: CommandRequest,

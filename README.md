@@ -1,21 +1,22 @@
-# Centinela-IoT: Nodo de Seguridad Edge & ESP32 Universal Hub 🛡️⚡
+# Centinela-IoT v3.0: Nodo Edge & App Android OT 🛡️☁️⚡
 
 [![INACAP](https://img.shields.io/badge/INACAP-Puerto%20Montt-red.svg)](https://www.inacap.cl)
 [![Asignatura](https://img.shields.io/badge/TI3042-Aplicaciones%20M%C3%B3viles%20para%20IoT-blue.svg)]()
-[![Plataforma](https://img.shields.io/badge/Hardware-ESP32--WROOM--32-00E5FF.svg)]()
+[![Hardware](https://img.shields.io/badge/Hardware-ESP32--WROOM--32%20%7C%20DHT11-00E5FF.svg)]()
 [![Seguridad](https://img.shields.io/badge/Norma-ISO%2FIEC%2027400%3A2022-success.svg)]()
 [![Cloud BaaS](https://img.shields.io/badge/Supabase-PostgreSQL%20Cloud-3ECF8E.svg)](docs/INTEGRACION_SUPABASE_Y_ROLES.md)
+[![Serial Seguro](https://img.shields.io/badge/Serial%20USB--OTG-HMAC--SHA256%20Truncado-orange.svg)]()
 [![Android](https://img.shields.io/badge/Android%20Studio-Kotlin%20%7C%20Material%203-brightgreen.svg)]()
 
-> **Evaluación Sumativa Unidad 2 (25%)**  
+> **Evaluación Sumativa Unidad 3 (35%) — Integración de Smart Devices con Aplicaciones Externas**  
 > **Carrera:** Ingeniería / Técnico en Informática  
 > **Integrantes:** Juan Pablo Villavicencio, Daryl Izquierdo, Antonio Benedetti  
 > **Docente:** Rodrigo Arturo Ruiz Hess  
-> **Fecha:** Octubre de 2026  
+> **Fecha:** Noviembre de 2026  
 
 ---
 
-## 📱 1. Descarga del APK Generado
+## 📱 1. Descarga del APK Generado (v3.0)
 
 El instalador compilado para Android se encuentra disponible en la raíz del repositorio:
 * **Archivo APK:** [`CentinelaIoT_Universal_ESP32.apk`](CentinelaIoT_Universal_ESP32.apk)
@@ -24,23 +25,35 @@ El instalador compilado para Android se encuentra disponible en la raíz del rep
 
 ---
 
-## 🎯 2. Visión General del Proyecto y Cumplimiento de Criterios
+## 🎯 2. Visión General del Proyecto y Cumplimiento de Criterios (Unidad 3)
 
-Esta solución móvil integra dos componentes esenciales:
-1. **Módulo Centinela-IoT (Específico):** Supervisión y control perimetral en tiempo real del nodo de seguridad basado en ESP32 con procesamiento local (*Edge Computing*), sensor ultrasónico HC-SR04, fotorresistor LDR, pestillo servomotor SG90 y zumbador pasivo de 2 kHz.
-2. **ESP32 Universal Hub (Genérico):** Panel de control y telemetría universal para interactuar con **cualquier proyecto de ESP32**, permitiendo comandar pines GPIO digitales (relés, luces), sliders PWM (motores, servomotores), leer sensores analógicos y enviar/recibir comandos en bruto por consola serial.
+Esta solución ciberfísica unifica sensores, actuadores, protocolo serial seguro y persistencia cuádruple:
+1. **Nodo Edge Multiparamétrico (ESP32-WROOM-32):**
+   - Transductor ultrasónico HC-SR04 (GPIO 5/18 con divisor resistivo a 3.33V y timeout seguro 25 ms).
+   - Fotorresistor LDR GL5528 (GPIO 34 ADC1_CH6 con filtro de media móvil).
+   - **Sensor digital de temperatura y humedad DHT11 (GPIO 27 One-Wire).**
+   - Micro servomotor SG90 (GPIO 13 PWM 50 Hz, 0° bloqueo / 90° apertura).
+   - Zumbador piezoeléctrico pasivo (GPIO 14 canal LEDC, 2 kHz).
+   - Pulsador físico con filtro debounce de 50 ms (GPIO 4 INPUT_PULLUP).
+2. **Servidor Web Asíncrono Embebido en ESP32:**
+   - Portal web en PROGMEM (`/`, `/login`, `/dashboard`, `/lecturas`, `/api/v1/control`, `/logout`) con autenticación validada estrictamente en backend C++ con hash SHA-256 en NVS (`Preferences.h`).
+3. **Protocolo de Comunicación Serial Segura USB-OTG (Criterio 3.1.2):**
+   - Analizador sintáctico no bloqueante a 115200 bps con buffer estático acotado a 256 bytes (anti-overflow).
+   - Delimitadores binarios `<STX>` (`\x02`) y `<ETX>` (`\x03`) con firma criptográfica HMAC-SHA256 truncada a 16 hex.
+   - Handshake bidireccional Mobile-MCU: `CMD_PING_HANDSHAKE` -> `ACK_PONG_READY`.
+4. **Arquitectura de Persistencia Cuádruple (Store-and-Forward):**
+   - **Capa 1:** NVS y LittleFS (`/offline_queue.jsonl`, 64 KB, 512 eventos) en ESP32.
+   - **Capa 2:** SQLite Room en Android con tareas diferidas `WorkManager`.
+   - **Capa 3:** API Local PHP/MySQL (`server_php/api/guardar_datos.php`) endurecida contra SQL Injection con sentencias preparadas.
+   - **Capa 4:** Cloud Supabase PostgreSQL (`public.sensores`, `roles`, `app_users`, `audit_logs`) sobre HTTPS/TLS con políticas Row Level Security (RLS).
+5. **Panel de Administración Dinámico de Roles (RBAC):**
+   - Creación en caliente de roles a medida con permisos granulares (desarme, apertura remota, control GPIO, auditoría) y alta de operadores con contraseñas hasheadas (SHA-256 + Salt).
 
-3. **Sincronización Cloud Supabase & Panel RBAC:** Integración con backend PostgreSQL en la nube (Supabase BaaS) mediante API REST PostgREST para sincronización de telemetría y auditoría, sumado a un **Panel de Administrador** para la creación y gestión dinámica de roles con permisos granulares (desarme, apertura remota, control GPIO, auditoría) y alta de operadores.
-
-### Alineación con los Criterios de Evaluación (Unidad 2):
-* **2.1.1 (Herramientas y Diseño Android):** Desarrollada con **Android Studio y Kotlin**, siguiendo los lineamientos de diseño **Material Design 3 (M3)**, ViewBinding, ViewModel desacoplado y componentes industriales adaptativos.
-* **2.1.2 (Conexiones Inalámbricas):** Soporta conexión Wi-Fi mediante **API REST HTTP**, WebSockets y peticiones JSON asíncronas de telemetría y telemando hacia el microcontrolador ESP32, servidor intermediario y **nube Supabase**.
-* **2.1.3 (Estándar ISO/IEC 27400:2022 de Seguridad IoT/OT):**
-  - Autenticación segura obligatoria previa a cualquier operación.
-  - Hashing criptográfico de contraseñas con **SHA-256 + Salt único** por usuario.
-  - Control de Acceso Basado en Roles Dinámico (**ADMIN**, **OPERADOR**, **MONITOR** y roles personalizados creados por el administrador).
-  - Trazabilidad y **Registro Inmutable de Auditoría (*Audit Trail*)** en base de datos local SQLite y respaldado en la nube Supabase.
-* **2.1.4 (Interconexión Multi-dispositivo):** Permite ser desplegada en dos o más dispositivos móviles Android sincronizados, compartiendo la telemetría en tiempo real del nodo.
+### Alineación con los Criterios de Evaluación de la Unidad 3:
+* **3.1.1 (Estándar de envío de información segura):** Cifrado HTTPS/TLS con `WiFiClientSecure` y `OkHttp3`, cabeceras obligatorias `apikey` y Bearer JWT en Supabase, sentencias preparadas en PHP/MySQL y firmas SHA-256 con `mbedtls`.
+* **3.1.2 (Comunicación Serial Segura):** Analizador sintáctico no bloqueante a 115200 bps con buffer estático de 256 bytes, delimitadores STX/ETX y firma obligatoria HMAC-SHA256 (`GET_SENSORS`, `SET_THRESHOLDS`, `ACTUATOR_CTRL`, `CMD_PING_HANDSHAKE`).
+* **3.1.3 (Control Inalámbrico de Microcontrolador):** Servidor HTTP embebido en ESP32 para recepción de comandos remotos de actuación (SG90/Buzzer) y parametrización de sensores (HC-SR04/LDR/DHT11), más cliente HTTPS activo hacia Supabase Cloud.
+* **3.1.4 (Conexión Segura App Android - IoT bajo ISO/IEC 27000):** Resguardo de tokens en `AndroidKeyStore` (AES-256-GCM), bloqueo de tráfico en texto claro (`network_security_config.xml`), minimización de datos personales, reconexión automática con Exponential Backoff with Jitter y almacenamiento Store-and-Forward.
 
 ---
 

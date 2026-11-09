@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.inacap.centinelaiot.CentinelaApp
 import com.inacap.centinelaiot.data.database.model.AuditLog
 import com.inacap.centinelaiot.data.database.model.GenericWidget
+import com.inacap.centinelaiot.data.network.CentinelaSmartDeviceController
 import com.inacap.centinelaiot.data.network.NetworkClient
 import com.inacap.centinelaiot.data.network.model.CommandRequest
 import com.inacap.centinelaiot.data.network.model.TelemetryResponse
@@ -21,6 +22,7 @@ class MainViewModel : ViewModel() {
 
     private val db = CentinelaApp.instance.database
     private val session = CentinelaApp.instance.sessionManager
+    private val smartController = CentinelaSmartDeviceController()
 
     private val _telemetry = MutableLiveData<TelemetryResponse>()
     val telemetry: LiveData<TelemetryResponse> = _telemetry
@@ -65,14 +67,16 @@ class MainViewModel : ViewModel() {
     private suspend fun fetchRealHardwareTelemetry() {
         try {
             val service = NetworkClient.getService(session.baseUrl)
-            val response = service.getTelemetria(token = "Bearer ${session.token}")
-            if (response.isSuccessful && response.body() != null) {
-                val data = response.body()!!
+            val result = smartController.ejecutarConReconexionAutomatica(maxIntentos = 3) {
+                service.getTelemetria(token = "Bearer ${session.token}")
+            }
+            if (result.isSuccess && result.getOrNull() != null) {
+                val data = result.getOrNull()!!
                 _telemetry.postValue(data)
                 _connectionStatus.postValue("ONLINE: ${session.baseUrl}")
                 checkAlarmTransition(data)
             } else {
-                _connectionStatus.postValue("ERROR HTTP: ${response.code()}")
+                _connectionStatus.postValue(smartController.estadoConexion.value)
             }
         } catch (e: Exception) {
             _connectionStatus.postValue("SIN CONEXIÓN ESP32 (${e.message ?: "Timeout"})")

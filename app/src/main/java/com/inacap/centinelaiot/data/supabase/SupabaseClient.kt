@@ -326,6 +326,18 @@ object SupabaseClient {
                 modo TEXT NOT NULL
             );
 
+            -- 5. Tabla Unificada de Sensores OT (Unidad 3 - DHT11, HC-SR04, LDR)
+            CREATE TABLE IF NOT EXISTS public.sensores (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                fechatoma TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+                temperatura NUMERIC(5,2) NOT NULL,
+                humedad NUMERIC(5,2) NOT NULL,
+                distancia_cm INTEGER NOT NULL,
+                luz_adc INTEGER NOT NULL,
+                alarma_activa BOOLEAN DEFAULT FALSE NOT NULL,
+                operador_android TEXT DEFAULT 'ESP32_EDGE_NODE'
+            );
+
             -- Roles iniciales
             INSERT INTO public.roles (name, description, can_disarm, can_remote_open, can_universal_gpio, can_manage_users, can_view_audit, is_system, created_at)
             VALUES 
@@ -339,11 +351,22 @@ object SupabaseClient {
             ALTER TABLE public.app_users ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
             ALTER TABLE public.telemetry ENABLE ROW LEVEL SECURITY;
+            ALTER TABLE public.sensores ENABLE ROW LEVEL SECURITY;
 
             CREATE POLICY "Permitir acceso anónimo a roles" ON public.roles FOR ALL USING (true);
             CREATE POLICY "Permitir acceso anónimo a usuarios" ON public.app_users FOR ALL USING (true);
             CREATE POLICY "Permitir acceso anónimo a audit_logs" ON public.audit_logs FOR ALL USING (true);
             CREATE POLICY "Permitir acceso anónimo a telemetría" ON public.telemetry FOR ALL USING (true);
+
+            CREATE POLICY "Permitir insercion telemetria autenticada"
+            ON public.sensores FOR INSERT
+            TO anon, authenticated
+            WITH CHECK (temperatura BETWEEN -20 AND 85 AND humedad BETWEEN 0 AND 100);
+
+            CREATE POLICY "Permitir lectura historial OT"
+            ON public.sensores FOR SELECT
+            TO anon, authenticated
+            USING (true);
         """.trimIndent()
     }
 }

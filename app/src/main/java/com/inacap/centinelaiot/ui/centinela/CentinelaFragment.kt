@@ -101,6 +101,10 @@ class CentinelaFragment : Fragment() {
             binding.tvLightCondition.setTextColor(textSecondaryColor)
         }
 
+        // 3.1 Sensor Termohigrométrico DHT11 (Unidad 3)
+        binding.tvTempValue.text = String.format(java.util.Locale.getDefault(), "%.1f °C", data.temperatura)
+        binding.tvHumidityValue.text = String.format(java.util.Locale.getDefault(), "%.1f %%", data.humedad)
+
         // 4. Pestillo Servomotor SG90
         if (data.pestilloGrados == 0 || data.alarmaActiva) {
             binding.ivServoLockIcon.setImageResource(R.drawable.ic_lock_closed)

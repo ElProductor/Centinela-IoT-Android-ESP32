@@ -1,271 +1,531 @@
 /*
  * ==============================================================================
- * PROYECTO: Centinela-IoT: Nodo de Seguridad Edge Multiparamétrico
+ * PROYECTO: Centinela-IoT v3.0 - Firmware Unificado Unidad 3 (TI3042 - INACAP)
  * INSTITUCIÓN: INACAP - Sede Puerto Montt
- * ASIGNATURA: Aplicaciones Móviles para IoT (TI3042) - Unidad 2
- * ALUMNOS: Juan Pablo Villavicencio, Daryl Izquierdo, Antonio Benedetti
+ * ASIGNATURA: Aplicaciones Móviles para IoT (TI3042) - Evaluación Sumativa Unidad 3
+ * INTEGRANTES: Juan Pablo Villavicencio, Daryl Izquierdo, Antonio Benedetti
  * DOCENTE: Rodrigo Arturo Ruiz Hess
- * HARDWARE: ESP32-WROOM-32 (Microcontrolador Doble Núcleo 240 MHz con Wi-Fi/BLE)
- * ==============================================================================
- * 
- * DESCRIPCIÓN DE PINES EN ESP32:
- * - HC-SR04 Trig:       GPIO 5  (Salida digital)
- * - HC-SR04 Echo:       GPIO 18 (Entrada digital vía divisor de tensión 1k / 2k)
- * - LDR GL5528:         GPIO 34 (Entrada analógica ADC1_CH6, 0 a 4095)
- * - Micro Servo SG90:   GPIO 13 (PWM 50 Hz, pestillo de bloqueo)
- * - Zumbador Pasivo:    GPIO 14 (Canal LEDC PWM, 2000 Hz)
- * - Pulsador Táctil:    GPIO 4  (INPUT_PULLUP, LOW al presionar)
- * - Alimentación:       5V / VIN para Servo y HC-SR04; 3V3 para ESP32 y LDR; GND común
+ * ESTÁNDARES: ISO/IEC 27400:2022 | ISO/IEC 27001 | Programación Serial e HTTPS Segura
+ * HARDWARE: ESP32-WROOM-32 + HC-SR04 + LDR GL5528 + DHT11 + SG90 + Buzzer PWM
  * ==============================================================================
  */
 
+#include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include <LittleFS.h>
+#include <DHT.h>
 #include <ESP32Servo.h>
-#include <ArduinoJson.h>
+#include "mbedtls/sha256.h"
+#include "time.h"
 
-// --- Credenciales Wi-Fi (Modo Estación) ---
-const char* WIFI_SSID     = "TU_RED_WIFI";
-const char* WIFI_PASSWORD = "TU_PASSWORD";
+// --- 1. DEFINICIÓN DE PINES DE HARDWARE (UNIDAD 3) ---
+constexpr uint8_t PIN_TRIG_HCSR04 = 5;
+constexpr uint8_t PIN_ECHO_HCSR04 = 18; // Divisor resistivo 1k/2k -> 3.33V máx
+constexpr uint8_t PIN_LDR_ADC     = 34; // ADC1_CH6 (12 bits: 0 - 4095)
+constexpr uint8_t PIN_DHT11       = 27; // Sensor Termohigrométrico Digital DHT11
+constexpr uint8_t PIN_BTN_DESARME = 4;  // INPUT_PULLUP con debounce
+constexpr uint8_t PIN_SERVO_SG90  = 13; // 0° Bloqueado | 90° Abierto
+constexpr uint8_t PIN_BUZZER_PWM  = 14; // Canal LEDC 0 (2 kHz, 50% duty)
 
-// --- Servidor Central Node.js (opcional, como en el informe) ---
-const char* SERVIDOR_NODE = "http://192.168.1.100:3000/telemetria";
+// --- 2. OBJETOS GLOBALES Y CONFIGURACIÓN SEGURA EN NVS ---
+DHT dht(PIN_DHT11, DHT11);
+Servo pestilloServo;
+WebServer server(80);
+Preferences secPrefs;
 
-// --- Asignación de Pines GPIO en ESP32 ---
-const int PIN_TRIG      = 5;
-const int PIN_ECHO      = 18;
-const int PIN_LDR       = 34;
-const int PIN_SERVO     = 13;
-const int PIN_BUZZER    = 14;
-const int PIN_BOTON     = 4;
+// Estado operativo y umbrales dinámicos (parametrizables desde App Android / Serial)
+struct SystemState {
+  long distanciaCm = 120;
+  int luzAdc = 2048;
+  float temperaturaC = 22.0f;
+  float humedadPct = 50.0f;
+  bool alarmaActiva = false;
+  int anguloServo = 90; // 90° Abierto, 0° Bloqueado
+  long umbralDistanciaCm = 50; // Configurable vía Serial/REST
+  int umbralLuzOscuridad = 800; // Configurable vía Serial/REST
+  float umbralTempMaxC = 35.0f; // Alerta térmica en sala de servidores OT
+  bool sesionWebAutenticada = false;
+  String ultimoOrigenCmd = "EDGE_BOOT";
+} estadoActual;
 
-// --- Umbrales de Seguridad ---
-const int UMBRAL_DIST_CM  = 50;   // Perímetro invisible (cm)
-const int UMBRAL_LUZ_ADC  = 800;  // Umbral de oscuridad (ADC 12 bits: 0 - 4095)
+// Buffer estático seguro para comunicación Serial (Evita Buffer Overflow - Criterio 3.1.2)
+constexpr size_t MAX_SERIAL_FRAME_LEN = 256;
+char serialRxBuffer[MAX_SERIAL_FRAME_LEN];
+size_t serialRxIndex = 0;
+bool recibiendoTramaSerial = false;
 
-// --- Objetos y Estados Globales ---
-Servo pestillo;
-WebServer server(80); // Servidor Web HTTP embebido directo en el ESP32
+// Tiempos de muestreo no bloqueantes y optimización de energía
+unsigned long lastSensorReadMs = 0;
+unsigned long lastCloudSyncMs = 0;
+constexpr unsigned long SENSOR_INTERVAL_MS = 2000;
+constexpr unsigned long CLOUD_SYNC_INTERVAL_MS = 15000;
 
-bool alarmaActiva      = false;
-bool perimetroArmado   = true;
-int  pestilloAngulo     = 90;     // 90° = Desbloqueado, 0° = Bloqueado
-unsigned long ultimoEnvio = 0;
+// --- 3. FUNCIONES CRIPTOGRÁFICAS (SHA-256 Y HMAC CON MBEDTLS - ISO/IEC 27400) ---
+String calcularSha256Hex(const String& payload) {
+  byte shaResult[32];
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts_ret(&ctx, 0);
+  mbedtls_sha256_update_ret(&ctx, (const unsigned char*)payload.c_str(), payload.length());
+  mbedtls_sha256_finish_ret(&ctx, shaResult);
+  mbedtls_sha256_free(&ctx);
 
-// ==========================================
-// MEDICIÓN DE DISTANCIA (HC-SR04)
-// ==========================================
-long medirDistancia() {
-  digitalWrite(PIN_TRIG, LOW);
+  char hexStr[65];
+  for (int i = 0; i < 32; i++) {
+    sprintf(&hexStr[i * 2], "%02x", shaResult[i]);
+  }
+  hexStr[64] = '\0';
+  return String(hexStr);
+}
+
+bool verificarFirmaTramaSerial(const String& datos, const String& firmaRecibida) {
+  String secretKey = secPrefs.getString("hmac_key", "CentinelaOT_Secret_2026");
+  String calculada = calcularSha256Hex(datos + "|" + secretKey).substring(0, 16);
+  return calculada.equalsIgnoreCase(firmaRecibida);
+}
+
+String obtenerTimestampIso() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 50)) {
+    return "2026-11-09 10:30:00"; // Fallback controlado si NTP aún no responde
+  }
+  char timeStr[25];
+  strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(timeStr);
+}
+
+// --- 4. CONTROL DE ACTUADORES Y LECTURA DE SENSORES (PASOS 1, 3 Y 4) ---
+void aplicarEstadoActuadores(bool bloquear, const String& origen) {
+  estadoActual.alarmaActiva = bloquear;
+  estadoActual.anguloServo = bloquear ? 0 : 90;
+  estadoActual.ultimoOrigenCmd = origen;
+  pestilloServo.write(estadoActual.anguloServo);
+
+  if (bloquear) {
+    ledcWrite(0, 128); // Activa sirena piezoeléctrica a 2 kHz (duty 50%)
+  } else {
+    ledcWrite(0, 0);   // Silencia sirena
+  }
+}
+
+void leerSensoresEnBorde() {
+  // 1. Medición Ultrasónica HC-SR04 con timeout seguro (25,000 us = ~4 metros)
+  digitalWrite(PIN_TRIG_HCSR04, LOW);
   delayMicroseconds(2);
-  digitalWrite(PIN_TRIG, HIGH);
+  digitalWrite(PIN_TRIG_HCSR04, HIGH);
   delayMicroseconds(10);
-  digitalWrite(PIN_TRIG, LOW);
+  digitalWrite(PIN_TRIG_HCSR04, LOW);
 
-  // Timeout de 30 ms (~5 metros)
-  long duracion = pulseIn(PIN_ECHO, HIGH, 30000);
-  if (duracion == 0) return 999; // Fuera de rango
-  return duracion / 58;          // Conversión a centímetros
-}
-
-// ==========================================
-// CONTROL DEL ZUMBADOR (LEDC PWM)
-// ==========================================
-void activarAlarmaSonora(bool activar) {
-  if (activar) {
-    ledcWrite(PIN_BUZZER, 128); // 50% ciclo de trabajo a 2000 Hz
+  long duracionUs = pulseIn(PIN_ECHO_HCSR04, HIGH, 25000);
+  if (duracionUs > 0) {
+    estadoActual.distanciaCm = (long)((duracionUs * 0.0343f) / 2.0f);
   } else {
-    ledcWrite(PIN_BUZZER, 0);   // Silencio
-  }
-}
-
-// ==========================================
-// CONTROL DEL PESTILLO FÍSICO (SERVO SG90)
-// ==========================================
-void moverPestillo(int angulo) {
-  pestilloAngulo = constrain(angulo, 0, 180);
-  pestillo.write(pestilloAngulo);
-}
-
-// ==========================================
-// ENVÍO DE TELEMETRÍA AL SERVIDOR NODE.JS
-// ==========================================
-void enviarTelemetriaNode(long dist, int luz, bool boton) {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  http.begin(SERVIDOR_NODE);
-  http.addHeader("Content-Type", "application/json");
-
-  String json = "{\"dist\":" + String(dist) +
-                ",\"luz\":" + String(luz) +
-                ",\"alarma\":" + String(alarmaActiva ? "true" : "false") +
-                ",\"pestillo\":" + String(pestilloAngulo) +
-                ",\"boton\":" + String(boton ? "true" : "false") + "}";
-
-  http.POST(json);
-  http.end();
-}
-
-// ==========================================
-// RUTAS DE LA API REST INTERNA DEL ESP32
-// ==========================================
-void handleGetTelemetria() {
-  long dist = medirDistancia();
-  int luz   = analogRead(PIN_LDR);
-  bool btn  = (digitalRead(PIN_BOTON) == LOW);
-
-  String json = "{\"dist\":" + String(dist) +
-                ",\"luz\":" + String(luz) +
-                ",\"alarma\":" + String(alarmaActiva ? "true" : "false") +
-                ",\"pestillo\":" + String(pestilloAngulo) +
-                ",\"boton\":" + String(btn ? "true" : "false") +
-                ",\"ip\":\"" + WiFi.localIP().toString() + "\"" +
-                ",\"uptime\":" + String(millis() / 1000) + "}";
-
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "application/json", json);
-}
-
-void handlePostComando() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  if (!server.hasArg("plain")) {
-    server.send(400, "application/json", "{\"status\":\"error\",\"mensaje\":\"Sin cuerpo JSON\"}");
-    return;
+    estadoActual.distanciaCm = 999;
   }
 
-  String body = server.arg("plain");
-  StaticJsonDocument<256> doc;
-  DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    server.send(400, "application/json", "{\"status\":\"error\",\"mensaje\":\"JSON invalido\"}");
-    return;
+  // 2. Medición Fotorresistor LDR GL5528 con filtro de media móvil
+  long sumaAdc = 0;
+  for (int i = 0; i < 4; i++) {
+    sumaAdc += analogRead(PIN_LDR_ADC);
+  }
+  estadoActual.luzAdc = (int)(sumaAdc / 4);
+
+  // 3. Medición Termohigrométrica DHT11 (Integración Unidad 3)
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+  if (!isnan(t) && !isnan(h)) {
+    estadoActual.temperaturaC = t;
+    estadoActual.humedadPct = h;
   }
 
-  String cmd = doc["comando"] | "";
-  cmd.toLowerCase();
-
-  if (cmd == "desbloquear" || cmd == "unlock") {
-    alarmaActiva = false;
-    activarAlarmaSonora(false);
-    moverPestillo(90);
-    server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"Pestillo abierto remotamente (90 grados)\"}");
-  } else if (cmd == "bloquear" || cmd == "lock") {
-    moverPestillo(0);
-    server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"Pestillo bloqueado remotamente (0 grados)\"}");
-  } else if (cmd == "silenciar" || cmd == "silence") {
-    activarAlarmaSonora(false);
-    alarmaActiva = false;
-    server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"Alarma silenciada\"}");
-  } else if (cmd == "armar") {
-    perimetroArmado = true;
-    server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"Perimetro armado\"}");
-  } else if (cmd == "desarmar") {
-    perimetroArmado = false;
-    alarmaActiva = false;
-    activarAlarmaSonora(false);
-    moverPestillo(90);
-    server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"Perimetro desarmado\"}");
-  } else if (cmd == "gpio_set") {
-    int pin = doc["pin"] | -1;
-    int val = doc["valor"] | 0;
-    if (pin >= 0) {
-      pinMode(pin, OUTPUT);
-      digitalWrite(pin, val);
-      server.send(200, "application/json", "{\"status\":\"ok\",\"mensaje\":\"GPIO actualizado\"}");
+  // 4. Lógica de Fusión Sensorial en el Borde (Continuidad Operativa OT)
+  if (estadoActual.distanciaCm > 0 && estadoActual.distanciaCm < estadoActual.umbralDistanciaCm) {
+    if (!estadoActual.alarmaActiva) {
+      aplicarEstadoActuadores(true, "AUTO_INTRUSION_HCSR04");
     }
-  } else {
-    server.send(404, "application/json", "{\"status\":\"error\",\"mensaje\":\"Comando no reconocido\"}");
+  }
+
+  // 5. Verificación de Secuencia Física Tripartita de Desarme Local
+  bool botonPresionado = (digitalRead(PIN_BTN_DESARME) == LOW);
+  if (estadoActual.alarmaActiva && botonPresionado &&
+      estadoActual.distanciaCm >= estadoActual.umbralDistanciaCm &&
+      estadoActual.luzAdc < estadoActual.umbralLuzOscuridad) {
+    aplicarEstadoActuadores(false, "DESARME_FISICO_TRIPARTITO");
   }
 }
 
-// ==========================================
-// CONFIGURACIÓN INICIAL (SETUP)
-// ==========================================
+// --- 5. ALMACENAMIENTO TEMPORAL (LITTLEFS) Y ENVÍO SEGURO A SUPABASE (PASO 5) ---
+void guardarEnBufferLocalLittleFS(const String& jsonPayload) {
+  File file = LittleFS.open("/offline_queue.jsonl", FILE_APPEND);
+  if (file) {
+    if (file.size() < 65536) { // Límite de 64 KB para proteger la memoria Flash
+      file.println(jsonPayload);
+    }
+    file.close();
+  }
+}
+
+bool enviarDatosASupabaseCloud(const String& jsonPayload) {
+  if (WiFi.status() != WL_CONNECTED) {
+    guardarEnBufferLocalLittleFS(jsonPayload);
+    return false;
+  }
+
+  String supabaseUrl = secPrefs.getString("sb_url", "https://centinela-ot.supabase.co/rest/v1/sensores");
+  String supabaseKey = secPrefs.getString("sb_key", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9_ANON_KEY");
+
+  WiFiClientSecure client;
+  client.setInsecure(); // En producción OT se carga el Root CA con client.setCACert(root_ca)
+  HTTPClient https;
+
+  if (!https.begin(client, supabaseUrl)) {
+    guardarEnBufferLocalLittleFS(jsonPayload);
+    return false;
+  }
+
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("apikey", supabaseKey);
+  https.addHeader("Authorization", "Bearer " + supabaseKey);
+  https.addHeader("Prefer", "return=minimal");
+
+  int httpCode = https.POST(jsonPayload);
+  https.end();
+
+  if (httpCode >= 200 && httpCode < 300) {
+    return true;
+  } else {
+    guardarEnBufferLocalLittleFS(jsonPayload);
+    return false;
+  }
+}
+
+void sincronizarColaPendienteLittleFS() {
+  if (WiFi.status() != WL_CONNECTED || !LittleFS.exists("/offline_queue.jsonl")) return;
+
+  File file = LittleFS.open("/offline_queue.jsonl", FILE_READ);
+  if (!file) return;
+
+  String lineasPendientes = "";
+  while (file.available()) {
+    String linea = file.readStringUntil('\n');
+    linea.trim();
+    if (linea.length() > 5) {
+      if (!enviarDatosASupabaseCloud(linea)) {
+        lineasPendientes += linea + "\n";
+      }
+    }
+  }
+  file.close();
+
+  LittleFS.remove("/offline_queue.jsonl");
+  if (lineasPendientes.length() > 0) {
+    File rewrite = LittleFS.open("/offline_queue.jsonl", FILE_WRITE);
+    if (rewrite) {
+      rewrite.print(lineasPendientes);
+      rewrite.close();
+    }
+  }
+}
+
+// --- 6. PROCESADOR DE COMUNICACIÓN SERIAL SEGURA (CRITERIO 3.1.2) ---
+// Formato esperado: \x02CMD|PARAM1=VAL1;PARAM2=VAL2|FIRMA_16HEX\x03
+void procesarTramaSerialSegura(const String& trama) {
+  int sep1 = trama.indexOf('|');
+  int sep2 = trama.lastIndexOf('|');
+
+  if (sep1 == -1 || sep2 == -1 || sep1 == sep2) {
+    Serial.println("\x02ERR|FORMATO_TRAMA_INVALIDO\x03");
+    return;
+  }
+
+  String cmd = trama.substring(0, sep1);
+  String params = trama.substring(sep1 + 1, sep2);
+  String firmaRecibida = trama.substring(sep2 + 1);
+
+  String comandoConParams = trama.substring(0, sep2);
+  if (!verificarFirmaTramaSerial(comandoConParams, firmaRecibida)) {
+    Serial.println("\x02ERR|FIRMA_HMAC_INVALIDA_ISO27400\x03");
+    return;
+  }
+
+  if (cmd == "CMD_PING_HANDSHAKE") {
+    String resp = "\x02ACK_PONG_READY|ver=v3.0.4-OT;rssi=" + String(WiFi.RSSI()) +
+                  ";heap=" + String(ESP.getFreeHeap()) + "\x03";
+    Serial.println(resp);
+  }
+  else if (cmd == "GET_SENSORS") {
+    leerSensoresEnBorde();
+    String resp = "\x02OK_SENSORS|dist=" + String(estadoActual.distanciaCm) +
+                  ";luz=" + String(estadoActual.luzAdc) +
+                  ";temp=" + String(estadoActual.temperaturaC, 1) +
+                  ";hum=" + String(estadoActual.humedadPct, 1) +
+                  ";alarma=" + String(estadoActual.alarmaActiva ? 1 : 0) +
+                  ";servo=" + String(estadoActual.anguloServo) + "\x03";
+    Serial.println(resp);
+  }
+  else if (cmd == "SET_THRESHOLDS") {
+    int idxDist = params.indexOf("dist=");
+    int idxLuz  = params.indexOf("luz=");
+    if (idxDist != -1) {
+      long nuevoDist = params.substring(idxDist + 5, params.indexOf(';', idxDist)).toInt();
+      if (nuevoDist >= 10 && nuevoDist <= 200) {
+        estadoActual.umbralDistanciaCm = nuevoDist;
+        secPrefs.putLong("umb_dist", nuevoDist);
+      }
+    }
+    if (idxLuz != -1) {
+      int nuevaLuz = params.substring(idxLuz + 4).toInt();
+      if (nuevaLuz >= 100 && nuevaLuz <= 3800) {
+        estadoActual.umbralLuzOscuridad = nuevaLuz;
+        secPrefs.putInt("umb_luz", nuevaLuz);
+      }
+    }
+    Serial.println("\x02OK_THRESHOLDS|CALIBRACION_APLICADA\x03");
+  }
+  else if (cmd == "ACTUATOR_CTRL") {
+    if (params.indexOf("accion=ABRIR") != -1) {
+      aplicarEstadoActuadores(false, "SERIAL_ANDROID_AUTH");
+      Serial.println("\x02OK_ACTUATOR|SERVO=90;BUZZER=OFF\x03");
+    } else if (params.indexOf("accion=BLOQUEAR") != -1) {
+      aplicarEstadoActuadores(true, "SERIAL_ANDROID_LOCK");
+      Serial.println("\x02OK_ACTUATOR|SERVO=0;BUZZER=ON\x03");
+    }
+  }
+}
+
+void atenderPuertoSerialNoBloqueante() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\x02') { // STX: Inicio de trama
+      serialRxIndex = 0;
+      recibiendoTramaSerial = true;
+    } else if (c == '\x03' && recibiendoTramaSerial) { // ETX: Fin de trama
+      serialRxBuffer[serialRxIndex] = '\0';
+      recibiendoTramaSerial = false;
+      procesarTramaSerialSegura(String(serialRxBuffer));
+    } else if (recibiendoTramaSerial) {
+      if (serialRxIndex < (MAX_SERIAL_FRAME_LEN - 1)) {
+        serialRxBuffer[serialRxIndex++] = c;
+      } else {
+        // Prevención de Buffer Overflow (Criterio 3.1.2)
+        recibiendoTramaSerial = false;
+        serialRxIndex = 0;
+        Serial.println("\x02ERR|OVERFLOW_PROTECTION_TRIGGERED\x03");
+      }
+    }
+  }
+}
+
+// --- 7. PORTAL WEB EMBEBIDO CON LOGIN EN SERVIDOR Y ENDPOINTS REST (UNIDAD 3) ---
+const char login_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Acceso Centinela-IoT OT</title>
+<style>body{font-family:Arial,sans-serif;text-align:center;margin-top:50px;background:#0b0f19;color:#fff;}
+.box{display:inline-block;padding:25px;background:#131b2e;border-radius:12px;border:1px solid #29385c;}
+input{padding:10px;margin:8px;width:220px;background:#0b0f19;color:#fff;border:1px solid #29385c;border-radius:6px;}
+button{padding:10px 25px;background:#00e5ff;color:#001018;border:none;border-radius:6px;cursor:pointer;font-weight:bold;}</style></head>
+<body><div class="box"><h2>Acceso Seguro Nodo Centinela-IoT</h2>
+<form action="/login" method="POST">
+<input type="text" name="usuario" placeholder="Usuario OT" required><br>
+<input type="password" name="password" placeholder="Contraseña" required><br>
+<button type="submit">Ingresar al Panel</button></form></div></body></html>
+)rawliteral";
+
+const char dashboard_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Panel Telemetría Centinela-IoT</title>
+<style>body{font-family:Arial,sans-serif;text-align:center;background:#0b0f19;color:#fff;}
+.card{display:inline-block;padding:20px;margin:12px;background:#131b2e;border:1px solid #29385c;border-radius:12px;min-width:160px;}
+.btn{padding:10px 18px;margin:8px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-weight:bold;}
+.btn-open{background:#00e676;color:#00210a;}.btn-lock{background:#ff1744;}.btn-exit{background:#64748b;}</style></head>
+<body><h2>Consola Edge Centinela-IoT (ESP32 v3.0)</h2>
+<div class="card"><h3>Distancia HC-SR04</h3><h1 id="dist" style="color:#00e5ff;">-- cm</h1></div>
+<div class="card"><h3>Luz LDR</h3><h1 id="luz" style="color:#ffd600;">--</h1></div>
+<div class="card"><h3>Temperatura DHT11</h3><h1 id="temp" style="color:#ff9100;">-- °C</h1></div>
+<div class="card"><h3>Humedad DHT11</h3><h1 id="hum" style="color:#00e5ff;">-- %</h1></div>
+<div class="card"><h3>Estado Pestillo SG90</h3><h1 id="servo">--</h1></div><br>
+<button class="btn btn-open" onclick="enviarAccion('ABRIR')">Liberar Pestillo (90°)</button>
+<button class="btn btn-lock" onclick="enviarAccion('BLOQUEAR')">Bloquear Emergencia (0°)</button>
+<a href="/logout"><button class="btn btn-exit">Cerrar Sesión</button></a>
+<script>
+function actualizar(){
+fetch("/lecturas").then(r=>r.json()).then(d=>{
+document.getElementById("dist").innerHTML=d.distancia+" cm";
+document.getElementById("luz").innerHTML=d.luz;
+document.getElementById("temp").innerHTML=d.temperatura+" °C";
+document.getElementById("hum").innerHTML=d.humedad+" %";
+document.getElementById("servo").innerHTML=d.alarma?"<span style='color:#ff1744;'>BLOQUEADO (0°)</span>":"<span style='color:#00e676;'>LIBERADO (90°)</span>";
+});
+}
+function enviarAccion(act){
+fetch("/api/v1/control",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"accion="+act})
+.then(()=>actualizar());
+}
+setInterval(actualizar, 2000); actualizar();
+</script></body></html>
+)rawliteral";
+
+void configurarServidorWebYEndpoints() {
+  server.on("/", HTTP_GET, []() {
+    server.send_P(200, "text/html", login_html);
+  });
+
+  server.on("/login", HTTP_POST, []() {
+    String user = server.hasArg("usuario") ? server.arg("usuario") : "";
+    String pass = server.hasArg("password") ? server.arg("password") : "";
+
+    String storedUser = secPrefs.getString("admin_user", "admin");
+    String storedPassHash = secPrefs.getString("admin_hash", calcularSha256Hex("Inacap2026"));
+
+    if (user == storedUser && calcularSha256Hex(pass) == storedPassHash) {
+      estadoActual.sesionWebAutenticada = true;
+      server.sendHeader("Location", "/dashboard");
+      server.send(303);
+    } else {
+      server.send(401, "text/plain", "Acceso Denegado: Credenciales invalidas bajo politica ISO 27400");
+    }
+  });
+
+  server.on("/dashboard", HTTP_GET, []() {
+    if (!estadoActual.sesionWebAutenticada) {
+      server.sendHeader("Location", "/");
+      server.send(303);
+      return;
+    }
+    server.send_P(200, "text/html", dashboard_html);
+  });
+
+  server.on("/logout", HTTP_GET, []() {
+    estadoActual.sesionWebAutenticada = false;
+    server.sendHeader("Location", "/");
+    server.send(303);
+  });
+
+  server.on("/lecturas", HTTP_GET, []() {
+    leerSensoresEnBorde();
+    String json = "{";
+    json += "\"distancia\":" + String(estadoActual.distanciaCm) + ",";
+    json += "\"luz\":" + String(estadoActual.luzAdc) + ",";
+    json += "\"temperatura\":" + String(estadoActual.temperaturaC, 2) + ",";
+    json += "\"humedad\":" + String(estadoActual.humedadPct, 2) + ",";
+    json += "\"alarma\":" + String(estadoActual.alarmaActiva ? "true" : "false") + ",";
+    json += "\"anguloServo\":" + String(estadoActual.anguloServo) + ",";
+    json += "\"umbralDist\":" + String(estadoActual.umbralDistanciaCm) + ",";
+    json += "\"ultimoOrigen\":\"" + estadoActual.ultimoOrigenCmd + "\"";
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  // Compatibilidad con endpoint /telemetria de Unidad 2
+  server.on("/telemetria", HTTP_GET, []() {
+    leerSensoresEnBorde();
+    String json = "{";
+    json += "\"dist\":" + String(estadoActual.distanciaCm) + ",";
+    json += "\"luz\":" + String(estadoActual.luzAdc) + ",";
+    json += "\"temperatura\":" + String(estadoActual.temperaturaC, 2) + ",";
+    json += "\"humedad\":" + String(estadoActual.humedadPct, 2) + ",";
+    json += "\"alarma\":" + String(estadoActual.alarmaActiva ? "true" : "false") + ",";
+    json += "\"pestillo\":" + String(estadoActual.anguloServo) + ",";
+    json += "\"boton\":" + String(digitalRead(PIN_BTN_DESARME) == LOW ? "true" : "false");
+    json += "}";
+    server.send(200, "application/json", json);
+  });
+
+  server.on("/api/v1/control", HTTP_POST, []() {
+    if (server.hasArg("accion")) {
+      String accion = server.arg("accion");
+      if (accion == "ABRIR") {
+        aplicarEstadoActuadores(false, "ANDROID_WIFI_OVERRIDE");
+      } else if (accion == "BLOQUEAR") {
+        aplicarEstadoActuadores(true, "ANDROID_WIFI_LOCK");
+      }
+    }
+    if (server.hasArg("umbralDist")) {
+      long nuevoUmb = server.arg("umbralDist").toInt();
+      if (nuevoUmb >= 10 && nuevoUmb <= 200) {
+        estadoActual.umbralDistanciaCm = nuevoUmb;
+        secPrefs.putLong("umb_dist", nuevoUmb);
+      }
+    }
+    server.send(200, "application/json", "{\"status\":\"OK\",\"servo\":" + String(estadoActual.anguloServo) + "}");
+  });
+
+  // Compatibilidad con endpoint /comando de Unidad 2
+  server.on("/comando", HTTP_POST, []() {
+    if (server.hasArg("plain")) {
+      String body = server.arg("plain");
+      if (body.indexOf("desbloquear") != -1 || body.indexOf("abrir") != -1) {
+        aplicarEstadoActuadores(false, "ANDROID_REMOTE_CMD");
+      } else if (body.indexOf("bloquear") != -1 || body.indexOf("armar") != -1) {
+        aplicarEstadoActuadores(true, "ANDROID_REMOTE_CMD");
+      }
+    }
+    server.send(200, "application/json", "{\"status\":\"OK\",\"pestillo\":" + String(estadoActual.anguloServo) + "}");
+  });
+
+  server.begin();
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== INICIANDO NODO CENTINELA-IOT (ESP32) ===");
 
-  // Configuración de Pines I/O
-  pinMode(PIN_TRIG, OUTPUT);
-  pinMode(PIN_ECHO, INPUT);
-  pinMode(PIN_BOTON, INPUT_PULLUP);
+  pinMode(PIN_TRIG_HCSR04, OUTPUT);
+  pinMode(PIN_ECHO_HCSR04, INPUT);
+  pinMode(PIN_BTN_DESARME, INPUT_PULLUP);
 
-  // Configuración PWM del Zumbador (Canal LEDC a 2000 Hz, resolución 8 bits)
-  ledcAttach(PIN_BUZZER, 2000, 8);
-  activarAlarmaSonora(false);
+  dht.begin();
+  pestilloServo.setPeriodHertz(50);
+  pestilloServo.attach(PIN_SERVO_SG90, 500, 2400);
 
-  // Configuración del Servomotor SG90
-  ESP32PWM::allocateTimer(0);
-  pestillo.setPeriodHertz(50); // 50 Hz estándar para servos
-  pestillo.attach(PIN_SERVO, 500, 2400);
-  moverPestillo(90); // Posición inicial: Abierto
+  ledcAttach(PIN_BUZZER_PWM, 2000, 8); // API LEDC ESP32 3.x / 2.x
 
-  // Conexión Wi-Fi
-  Serial.print("Conectando a Wi-Fi: ");
-  Serial.println(WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  LittleFS.begin(true);
+  secPrefs.begin("centinela_nvs", false);
 
-  int intentos = 0;
-  while (WiFi.status() != WL_CONNECTED && intentos < 20) {
-    delay(500);
-    Serial.print(".");
-    intentos++;
-  }
+  estadoActual.umbralDistanciaCm = secPrefs.getLong("umb_dist", 50);
+  estadoActual.umbralLuzOscuridad = secPrefs.getInt("umb_luz", 800);
 
-  // Si no conecta al router, levantar Access Point propio de respaldo
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\n[AVISO] No se pudo conectar a la red. Levantando Modo Access Point...");
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("ESP32_CENTINELA_AP", "centinela2026");
-    Serial.print("AP IP: ");
-    Serial.println(WiFi.softAPIP());
-  } else {
-    Serial.print("\nWi-Fi Conectado. IP Local: ");
-    Serial.println(WiFi.localIP());
-  }
+  // Modo Estación con contingencia SoftAP
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.setSleep(true); // Activa Modem-Sleep dinámico para ahorro energético (Paso 3)
 
-  // Endpoints del Servidor Web HTTP embebido
-  server.on("/telemetria", HTTP_GET, handleGetTelemetria);
-  server.on("/comando", HTTP_POST, handlePostComando);
-  server.begin();
-  Serial.println("Servidor Web HTTP activo en puerto 80.");
+  String ssid = secPrefs.getString("wifi_ssid", "INACAP_OT_LAB");
+  String pass = secPrefs.getString("wifi_pass", "Inacap2026_IoT");
+  WiFi.begin(ssid.c_str(), pass.c_str());
+
+  // Punto de acceso local de contingencia
+  WiFi.softAP("ESP32_CENTINELA_AP", "Inacap2026!");
+
+  configTime(-10800, 0, "pool.ntp.org", "time.nist.gov"); // UTC-3 Chile
+  aplicarEstadoActuadores(false, "BOOT_INIT");
+
+  configurarServidorWebYEndpoints();
+  Serial.println("\n[CENTINELA-OT v3.0] Nodo iniciado correctamente. Baudrate: 115200 8N1");
 }
 
-// ==========================================
-// CICLO PRINCIPAL (LOOP) - EDGE COMPUTING
-// ==========================================
 void loop() {
-  server.handleClient(); // Atiende peticiones HTTP de la app Android
+  atenderPuertoSerialNoBloqueante();
+  server.handleClient();
 
-  long distancia = medirDistancia();
-  int  luz       = analogRead(PIN_LDR);
-  bool boton     = (digitalRead(PIN_BOTON) == LOW); // LOW al pulsar
-
-  // 1. Detección de Intrusión Perimetral (Edge Computing)
-  if (perimetroArmado && !alarmaActiva && distancia > 0 && distancia < UMBRAL_DIST_CM) {
-    Serial.println("[ALERTA] ¡Intrusión detectada en perímetro! Distancia: " + String(distancia) + " cm");
-    alarmaActiva = true;
-    moverPestillo(0);            // Bloqueo físico inmediato del pestillo
-    activarAlarmaSonora(true);   // Activa zumbador de alerta a 2000 Hz
+  unsigned long ahora = millis();
+  if (ahora - lastSensorReadMs >= SENSOR_INTERVAL_MS) {
+    lastSensorReadMs = ahora;
+    leerSensoresEnBorde();
   }
 
-  // 2. Secuencia de Desarme Físico Simultáneo (Fusión de Sensores):
-  // Exige: Perímetro despejado (> 50 cm) + Oscuridad (< 800 ADC) + Pulsación física
-  if (alarmaActiva && distancia > UMBRAL_DIST_CM && luz < UMBRAL_LUZ_ADC && boton) {
-    Serial.println("[SEGURIDAD] Secuencia física de desarme completada con éxito.");
-    alarmaActiva = false;
-    activarAlarmaSonora(false);
-    moverPestillo(90);          // Liberación física del pestillo
+  if (ahora - lastCloudSyncMs >= CLOUD_SYNC_INTERVAL_MS) {
+    lastCloudSyncMs = ahora;
+    String payload = "{\"fechatoma\":\"" + obtenerTimestampIso() + "\"," +
+                     "\"temperatura\":" + String(estadoActual.temperaturaC, 2) + "," +
+                     "\"humedad\":" + String(estadoActual.humedadPct, 2) + "," +
+                     "\"distancia_cm\":" + String(estadoActual.distanciaCm) + "," +
+                     "\"luz_adc\":" + String(estadoActual.luzAdc) + "," +
+                     "\"alarma_activa\":" + String(estadoActual.alarmaActiva ? "true" : "false") + "," +
+                     "\"operador_android\":\"ESP32_EDGE_NODE\"}";
+    if (enviarDatosASupabaseCloud(payload)) {
+      sincronizarColaPendienteLittleFS();
+    }
   }
-
-  // 3. Envío periódico de telemetría hacia el servidor Node.js (cada 2 segundos)
-  if (millis() - ultimoEnvio > 2000) {
-    enviarTelemetriaNode(distancia, luz, boton);
-    ultimoEnvio = millis();
-  }
-
-  delay(50);
 }

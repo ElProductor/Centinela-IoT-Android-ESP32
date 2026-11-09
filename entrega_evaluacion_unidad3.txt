@@ -1,0 +1,117 @@
+================================================================================
+INACAP SEDE PUERTO MONTT - DIRECCIÓN DE INFORMÁTICA Y TELECOMUNICACIONES
+ASIGNATURA: APLICACIONES MÓVILES PARA IOT (TI3042)
+EVALUACIÓN SUMATIVA UNIDAD 3 (35%)
+================================================================================
+
+PROYECTO:
+Centinela-IoT v3.0: Nodo Edge Multiparamétrico, Portal Web Asíncrono Embebido,
+App Android y Cloud Supabase OT bajo la Familia ISO/IEC 27000
+
+INTEGRANTES (EQUIPO DE INGENIERÍA):
+- Juan Pablo Villavicencio
+- Daryl Izquierdo
+- Antonio Benedetti
+
+DOCENTE EVALUADOR:
+Rodrigo Arturo Ruiz Hess
+
+FECHA DE ENTREGA:
+Noviembre 2026
+
+================================================================================
+1. ENLACE OFICIAL AL REPOSITORIO DE GITHUB
+================================================================================
+
+Repositorio GitHub (Código Fuente Completo, APK, Firmware v3.0 y Scripts):
+https://github.com/ElProductor/Centinela-IoT-Android-ESP32
+
+================================================================================
+2. ARCHIVO EJECUTABLE COMPILADO (APK ANDROID)
+================================================================================
+
+- Archivo APK en la raíz del repositorio: CentinelaIoT_Universal_ESP32.apk
+- Ruta de compilación local: app/build/outputs/apk/debug/app-debug.apk
+- Plataforma: Android 8.0 Oreo (API 26) hasta Android 15 (API 35)
+- Arquitectura: Kotlin Nativo, MVVM, Material Design 3, Jetpack Security-Crypto,
+  Retrofit2 + OkHttp3 con soporte TLS 1.3, SQLite Room y Enrutador Polimórfico.
+
+================================================================================
+3. CREDENCIALES DE ACCESO Y PARÁMETROS CRIPTOGRÁFICOS (ISO/IEC 27400)
+================================================================================
+
+[A] Acceso a la Aplicación Android (RBAC Dinámico en SQLite y Supabase):
++-------------------+----------------+-----------+----------------------------------------------+
+| Usuario           | Contraseña     | Rol       | Privilegios Operacionales OT                 |
++-------------------+----------------+-----------+----------------------------------------------+
+| admin             | admin123       | ADMIN     | Control total: Gestión y creación de roles,  |
+|                   |                |           | alta de operadores, apertura remota y purga. |
++-------------------+----------------+-----------+----------------------------------------------+
+| operador          | inacap2026     | OPERATOR  | Planta: Desarme perimetral, apertura de      |
+|                   |                |           | pestillo autorizada y comandos GPIO.         |
++-------------------+----------------+-----------+----------------------------------------------+
+| auditor           | auditor123     | MONITOR   | Solo lectura: Inspección de telemetría y     |
+|                   |                |           | auditoría forense inmutable (Audit Trail).   |
++-------------------+----------------+-----------+----------------------------------------------+
+
+[B] Portal Web Embebido en el ESP32 (http://<IP_ESP32>/):
+- Usuario: admin
+- Contraseña: Inacap2026 (Validada estrictamente en el backend C++ vía SHA-256)
+
+[C] Claves Criptográficas de Transporte Seguro:
+- Clave HMAC Serial (Criterio 3.1.2): CentinelaOT_Secret_2026
+- Clave API Local MySQL (api/guardar_datos.php): CentinelaOT_LocalKey_2026
+- Red Wi-Fi Contingencia SoftAP: SSID "ESP32_CENTINELA_AP" | Clave "Inacap2026!"
+
+================================================================================
+4. MATRIZ DE CUMPLIMIENTO DE CRITERIOS DE EVALUACIÓN (UNIDAD 3)
+================================================================================
+
+[CRITERIO 3.1.1] Codificación de instrucciones siguiendo estándar de información segura:
+- Comunicación cifrada HTTPS/TLS mediante WiFiClientSecure (ESP32) y OkHttp3 (Android).
+- Cabeceras obligatorias 'apikey' y 'Authorization: Bearer <JWT>' hacia Supabase Cloud.
+- Sentencias SQL preparadas (Prepared Statements con prepare y bind_param) en la API local
+  PHP (api/guardar_datos.php) para eliminar vulnerabilidades de Inyección SQL (SQLi).
+- Hashing criptográfico de contraseñas con SHA-256 + Salt único y resguardo en NVS (Preferences.h).
+
+[CRITERIO 3.1.2] Programación de comunicación Serial bajo programación segura:
+- Analizador sintáctico no bloqueante atenderPuertoSerialNoBloqueante() con buffer estático
+  acotado a 256 bytes (MAX_SERIAL_FRAME_LEN) para prevenir ataques de desbordamiento de búfer.
+- Estructura de trama delimitada por caracteres binarios: <STX>CMD|PARAMS|FIRMA<ETX> (\x02 y \x03).
+- Verificación obligatoria de firma HMAC-SHA256 (truncada a 16 hex) antes de ejecutar cualquier
+  instrucción hacia sensores o actuadores (GET_SENSORS, SET_THRESHOLDS, ACTUATOR_CTRL).
+- Handshake de prueba bidireccional Mobile-MCU: CMD_PING_HANDSHAKE -> ACK_PONG_READY.
+
+[CRITERIO 3.1.3] Control inalámbrico de microcontrolador en envío y recepción de instrucciones:
+- Servidor web asíncrono embebido en ESP32 sirviendo endpoints REST (/lecturas y /api/v1/control).
+- Portal de diagnóstico en PROGMEM con login autenticado y comandos remotos para liberar pestillo (90°)
+  o forzar bloqueo (0°), además de calibración de umbrales en caliente (10 a 200 cm).
+- Integración del sensor termohigrométrico digital DHT11 en GPIO 27 correlacionado con proximidad
+  ultrasónica (HC-SR04 en GPIO 5/18) e iluminación (LDR GL5528 en GPIO 34).
+- Desacoplamiento electromecánico del servomotor SG90 (GPIO 13) y zumbador PWM a 2 kHz (GPIO 14).
+
+[CRITERIO 3.1.4] Conexión segura App Android - IoT bajo estándar ISO/IEC 27000:
+- Enrutador de transporte polimórfico (CentinelaSmartDeviceController) con tres vías conmutables:
+  Wi-Fi Local REST, Supabase Cloud HTTPS y Serial Seguro USB-OTG a 115200 baudios.
+- Algoritmo de Reconexión Automática con Retroceso Exponencial y Variación Aleatoria
+  (Exponential Backoff with Jitter: T_wait = min(T_max, T_base * 2^k) + U(0, J_max)).
+- Arquitectura de Almacenamiento Temporal Store-and-Forward: Cola offline persistente en LittleFS
+  (/offline_queue.jsonl, 64 KB / 512 registros) en el ESP32 y SQLite Room en Android, garantizando
+  cero pérdida de datos ante caídas de red Wi-Fi o internet.
+- Modo Modem-Sleep dinámico (WiFi.setSleep(true)), reduciendo el consumo energético de 195 mA a 68 mA.
+
+================================================================================
+5. ESQUEMA DE PINES Y CONEXIONES FÍSICAS (ESP32-WROOM-32)
+================================================================================
+
+- GPIO 5  (D5)  -> Trigger del Sensor Ultrasónico HC-SR04
+- GPIO 18 (D18) -> Echo del HC-SR04 (Divisor resistivo 1k / 2k -> 3.33V seguro)
+- GPIO 34 (D34) -> Fotorresistencia LDR GL5528 (Divisor con R 10k a GND, canal ADC1_CH6)
+- GPIO 27 (D27) -> Sensor Termohigrométrico Digital DHT11 (Pull-up 4.7k a 3.3V)
+- GPIO 13 (D13) -> Servomotor SG90 (Pestillo Perimetral - Canal PWM 50 Hz)
+- GPIO 14 (D14) -> Zumbador Piezoeléctrico Pasivo (Alarma 2000 Hz, canal LEDC 0)
+- GPIO 4  (D4)  -> Pulsador Físico de Desarme (INPUT_PULLUP a GND con debounce 50 ms)
+- VIN / 5V      -> Alimentación 5V para HC-SR04 y Servomotor SG90
+- 3V3           -> Alimentación 3.3V para LDR GL5528 y DHT11
+- GND           -> Tierra común compartida
+================================================================================

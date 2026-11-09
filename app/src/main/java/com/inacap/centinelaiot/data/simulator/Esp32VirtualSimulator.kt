@@ -27,6 +27,8 @@ object Esp32VirtualSimulator {
     // Estados internos del microcontrolador emulado
     var simulatedDistance: Long = 120L
     var simulatedLight: Int = 1850
+    var simulatedTemp: Float = 22.5f
+    var simulatedHumidity: Float = 48.0f
     var isAlarmActive: Boolean = false
     var servoAngle: Int = 90
     var isButtonPressed: Boolean = false
@@ -42,13 +44,19 @@ object Esp32VirtualSimulator {
         if (job?.isActive == true) return
         job = scope.launch {
             while (isActive) {
-                // Leves variaciones aleatorias para realismo de sensor analógico
+                // Leves variaciones aleatorias para realismo de sensor analógico y termohigrométrico DHT11
                 if (simulatedDistance > 55) {
                     val jitter = Random.nextLong(-2, 3)
                     simulatedDistance = (simulatedDistance + jitter).coerceIn(52L, 250L)
                 }
                 val lightJitter = Random.nextInt(-15, 16)
                 simulatedLight = (simulatedLight + lightJitter).coerceIn(100, 4000)
+
+                val tempJitter = (Random.nextFloat() - 0.5f) * 0.2f
+                simulatedTemp = (simulatedTemp + tempJitter).coerceIn(15.0f, 42.0f)
+
+                val humJitter = (Random.nextFloat() - 0.5f) * 0.5f
+                simulatedHumidity = (simulatedHumidity + humJitter).coerceIn(20.0f, 90.0f)
 
                 // Lógica de detección perimetral (Edge Computing)
                 if (isPerimeterArmed && !isAlarmActive && simulatedDistance in 1 until UMBRAL_DIST) {
@@ -132,6 +140,9 @@ object Esp32VirtualSimulator {
                 _telemetryFlow.value = createTelemetry()
                 CommandResponse("ok", "Alarma sonora silenciada")
             }
+            "cmd_ping_handshake", "ping" -> {
+                CommandResponse("ok", "ACK_PONG_READY: ver=v3.0.4-OT; rssi=-58dBm; heap=218450 bytes")
+            }
             "gpio_set" -> {
                 val pin = req.pin ?: 2
                 val valPin = req.valor ?: 0
@@ -147,6 +158,8 @@ object Esp32VirtualSimulator {
         return TelemetryResponse(
             distancia = simulatedDistance,
             nivelLuz = simulatedLight,
+            temperatura = simulatedTemp,
+            humedad = simulatedHumidity,
             alarmaActiva = isAlarmActive,
             pestilloGrados = servoAngle,
             botonPresionado = isButtonPressed,
