@@ -151,16 +151,22 @@ class AdminManagementActivity : AppCompatActivity() {
 
             val insertedId = dbHelper.insertRole(newRole)
             if (insertedId >= 0) {
+                val ts = System.currentTimeMillis()
+                val logDetails = "Rol '$roleName' creado con permisos personalizados"
                 dbHelper.logEvent(
                     eventType = "ROLE_CREATED",
                     username = sessionManager.username,
-                    details = "Rol '$roleName' creado con permisos personalizados",
-                    severity = "INFO"
+                    details = logDetails,
+                    severity = "INFO",
+                    timestamp = ts
                 )
 
-                // Subir a Supabase en segundo plano si está configurado
+                // Subir rol y log de auditoría a Supabase en segundo plano si está configurado
                 lifecycleScope.launch {
                     val (pushed, pushMsg) = SupabaseClient.pushRole(newRole, sessionManager)
+                    if (sessionManager.isSupabaseEnabled) {
+                        SupabaseClient.pushAuditLog("ROLE_CREATED", sessionManager.username, logDetails, "INFO", ts, sessionManager)
+                    }
                     val msg = if (pushed) "Rol '$roleName' guardado y sincronizado en Supabase" else "Rol '$roleName' guardado localmente ($pushMsg)"
                     Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_LONG).show()
                 }
@@ -183,12 +189,21 @@ class AdminManagementActivity : AppCompatActivity() {
             .setPositiveButton("Eliminar") { _, _ ->
                 val deleted = dbHelper.deleteRole(role.name)
                 if (deleted) {
+                    val ts = System.currentTimeMillis()
+                    val logDetails = "Rol '${role.name}' eliminado"
                     dbHelper.logEvent(
                         eventType = "ROLE_DELETED",
                         username = sessionManager.username,
-                        details = "Rol '${role.name}' eliminado",
-                        severity = "WARNING"
+                        details = logDetails,
+                        severity = "WARNING",
+                        timestamp = ts
                     )
+                    lifecycleScope.launch {
+                        if (sessionManager.isSupabaseEnabled) {
+                            SupabaseClient.deleteRoleRemote(role.name, sessionManager)
+                            SupabaseClient.pushAuditLog("ROLE_DELETED", sessionManager.username, logDetails, "WARNING", ts, sessionManager)
+                        }
+                    }
                     Toast.makeText(this, "Rol '${role.name}' eliminado", Toast.LENGTH_SHORT).show()
                     loadData()
                 } else {
@@ -242,18 +257,24 @@ class AdminManagementActivity : AppCompatActivity() {
             )
 
             if (insertedId > 0) {
+                val ts = System.currentTimeMillis()
+                val logDetails = "Nuevo usuario '@$username' registrado con rol '$selectedRole'"
                 dbHelper.logEvent(
                     eventType = "USER_CREATED",
                     username = sessionManager.username,
-                    details = "Nuevo usuario '@$username' registrado con rol '$selectedRole'",
-                    severity = "INFO"
+                    details = logDetails,
+                    severity = "INFO",
+                    timestamp = ts
                 )
 
-                // Subir a Supabase en segundo plano si está conectado
+                // Subir usuario y auditoría a Supabase en segundo plano si está conectado
                 lifecycleScope.launch {
                     val userObj = dbHelper.getAllUsers().firstOrNull { it.username.equals(username, ignoreCase = true) }
                     if (userObj != null) {
                         val (pushed, pushMsg) = SupabaseClient.pushUser(userObj, sessionManager)
+                        if (sessionManager.isSupabaseEnabled) {
+                            SupabaseClient.pushAuditLog("USER_CREATED", sessionManager.username, logDetails, "INFO", ts, sessionManager)
+                        }
                         val msg = if (pushed) "Usuario '@$username' guardado y sincronizado en Supabase" else "Usuario '@$username' guardado localmente ($pushMsg)"
                         Toast.makeText(this@AdminManagementActivity, msg, Toast.LENGTH_LONG).show()
                     }
@@ -277,12 +298,21 @@ class AdminManagementActivity : AppCompatActivity() {
             .setPositiveButton("Eliminar Acceso") { _, _ ->
                 val deleted = dbHelper.deleteUser(user.username)
                 if (deleted) {
+                    val ts = System.currentTimeMillis()
+                    val logDetails = "Usuario '@${user.username}' revocado por el Administrador"
                     dbHelper.logEvent(
                         eventType = "USER_REVOKED",
                         username = sessionManager.username,
-                        details = "Usuario '@${user.username}' revocado por el Administrador",
-                        severity = "WARNING"
+                        details = logDetails,
+                        severity = "WARNING",
+                        timestamp = ts
                     )
+                    lifecycleScope.launch {
+                        if (sessionManager.isSupabaseEnabled) {
+                            SupabaseClient.deleteUserRemote(user.username, sessionManager)
+                            SupabaseClient.pushAuditLog("USER_REVOKED", sessionManager.username, logDetails, "WARNING", ts, sessionManager)
+                        }
+                    }
                     Toast.makeText(this, "Usuario '@${user.username}' revocado", Toast.LENGTH_SHORT).show()
                     loadData()
                 } else {

@@ -31,6 +31,7 @@ class SessionManager(context: Context) {
         private const val KEY_SUPABASE_KEY = "supabase_anon_key"
         private const val KEY_SUPABASE_ENABLED = "supabase_sync_enabled"
         private const val KEY_SUPABASE_LAST_SYNC = "supabase_last_sync"
+        private const val KEY_LAST_AUDIT_PUSH = "supabase_last_audit_push"
 
         // Valores por defecto
         const val DEFAULT_HOST = "192.168.1.100"
@@ -111,6 +112,10 @@ class SessionManager(context: Context) {
     var lastSyncTimestamp: Long
         get() = prefs.getLong(KEY_SUPABASE_LAST_SYNC, 0L)
         set(value) = prefs.edit().putLong(KEY_SUPABASE_LAST_SYNC, value).apply()
+
+    var lastAuditPushTimestamp: Long
+        get() = prefs.getLong(KEY_LAST_AUDIT_PUSH, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_AUDIT_PUSH, value).apply()
 
     // Verificación de Permisos Dinámicos (RBAC)
     fun canManageUsers(dbHelper: com.inacap.centinelaiot.data.database.DatabaseHelper): Boolean {

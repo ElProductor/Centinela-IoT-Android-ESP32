@@ -7,8 +7,12 @@ import androidx.appcompat.app.AppCompatActivity
 import com.inacap.centinelaiot.CentinelaApp
 import com.inacap.centinelaiot.R
 import com.inacap.centinelaiot.data.security.SecurityManager
+import com.inacap.centinelaiot.data.supabase.SupabaseClient
 import com.inacap.centinelaiot.databinding.ActivityLoginBinding
 import com.inacap.centinelaiot.ui.main.MainActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class LoginActivity : AppCompatActivity() {
 
@@ -69,22 +73,38 @@ class LoginActivity : AppCompatActivity() {
             sessionManager.saveSession(user.username, user.fullName, user.role, token)
 
             // Registro en Auditoría ISO 27400
+            val ts = System.currentTimeMillis()
+            val details = "Inicio de sesión exitoso. Rol otorgado: ${user.role}"
             dbHelper.logEvent(
                 eventType = "AUTH_LOGIN_SUCCESS",
                 username = user.username,
-                details = "Inicio de sesión exitoso. Rol otorgado: ${user.role}",
-                severity = "INFO"
+                details = details,
+                severity = "INFO",
+                timestamp = ts
             )
+            if (sessionManager.isSupabaseEnabled) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    SupabaseClient.pushAuditLog("AUTH_LOGIN_SUCCESS", user.username, details, "INFO", ts, sessionManager)
+                }
+            }
 
             Toast.makeText(this, "Bienvenido, ${user.fullName}", Toast.LENGTH_SHORT).show()
             navigateToMain()
         } else {
+            val ts = System.currentTimeMillis()
+            val details = "Intento fallido de autenticación desde la aplicación móvil"
             dbHelper.logEvent(
                 eventType = "AUTH_LOGIN_FAILED",
                 username = username,
-                details = "Intento fallido de autenticación desde la aplicación móvil",
-                severity = "WARNING"
+                details = details,
+                severity = "WARNING",
+                timestamp = ts
             )
+            if (sessionManager.isSupabaseEnabled) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    SupabaseClient.pushAuditLog("AUTH_LOGIN_FAILED", username, details, "WARNING", ts, sessionManager)
+                }
+            }
             Toast.makeText(this, getString(R.string.error_invalid_credentials), Toast.LENGTH_LONG).show()
         }
     }

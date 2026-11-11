@@ -4,13 +4,20 @@ import com.inacap.centinelaiot.data.database.DatabaseHelper
 import com.inacap.centinelaiot.data.database.model.AuditLog
 import com.inacap.centinelaiot.data.database.model.Role
 import com.inacap.centinelaiot.data.database.model.User
+import com.inacap.centinelaiot.data.network.model.SupabaseSensorRecord
+import com.inacap.centinelaiot.data.network.model.TelemetryResponse
 import com.inacap.centinelaiot.data.security.SessionManager
+import com.inacap.centinelaiot.data.simulator.Esp32VirtualSimulator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
@@ -206,8 +213,11 @@ object SupabaseClient {
                 }
             }
 
-            // 3. Subir Logs de Auditoría locales a Supabase
-            val localLogs = dbHelper.getAllAuditLogs().take(25)
+            // 3. Subir Logs de Auditoría locales pendientes a Supabase (sin duplicar previos)
+            val lastPushed = sessionManager.lastAuditPushTimestamp
+            val localLogs = dbHelper.getAllAuditLogs()
+                .filter { it.timestamp > lastPushed }
+                .take(50)
             if (localLogs.isNotEmpty()) {
                 val dtoList = localLogs.map {
                     SupabaseAuditLogDto(
@@ -221,14 +231,28 @@ object SupabaseClient {
                 val logResp = service.insertAuditLogs(dtoList)
                 if (logResp.isSuccessful || logResp.code() in 200..299) {
                     logsPushed = dtoList.size
+                    val maxTs = localLogs.maxOf { it.timestamp }
+                    if (maxTs > sessionManager.lastAuditPushTimestamp) {
+                        sessionManager.lastAuditPushTimestamp = maxTs
+                    }
                 }
             }
 
+            // 4. Subir snapshot actual de telemetría a 'telemetry' y 'sensores'
+            val snap = Esp32VirtualSimulator.telemetryFlow.value
+            val snapOk = pushTelemetrySnapshot(
+                data = snap,
+                operatorTag = sessionManager.username.ifBlank { "ANDROID_SYNC" },
+                isSimulator = sessionManager.isSimulatorActive,
+                sessionManager = sessionManager
+            )
+
             sessionManager.lastSyncTimestamp = System.currentTimeMillis()
+            val telMsg = if (snapOk) ", telemetría actualizada" else ""
 
             Pair(
                 true,
-                "Sincronización exitosa: $rolesSynced roles, $usersSynced usuarios, $logsPushed logs en la nube"
+                "Sincronización exitosa: $rolesSynced roles, $usersSynced usuarios, $logsPushed logs nuevos$telMsg"
             )
         } catch (e: Exception) {
             Pair(false, "Error de red durante sincronización: ${e.localizedMessage ?: e.message}")
@@ -307,6 +331,136 @@ object SupabaseClient {
                 Pair(false, "Error de red al sincronizar usuario: ${e.localizedMessage ?: e.message}")
             }
         }
+
+    /**
+     * Elimina un rol en Supabase de forma inmediata si está conectado.
+     */
+    suspend fun deleteRoleRemote(roleName: String, sessionManager: SessionManager): Pair<Boolean, String> =
+        withContext(Dispatchers.IO) {
+            if (!sessionManager.isSupabaseEnabled) {
+                return@withContext Pair(false, "Sincronización desactivada")
+            }
+            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+                ?: return@withContext Pair(false, "Cliente Supabase no disponible")
+
+            return@withContext try {
+                val resp = service.deleteRole("eq.$roleName")
+                if (resp.isSuccessful) {
+                    Pair(true, "Rol '$roleName' eliminado también en Supabase")
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    Pair(false, "Error Supabase (HTTP ${resp.code()}): $err")
+                }
+            } catch (e: Exception) {
+                Pair(false, "Error de red al eliminar rol: ${e.localizedMessage ?: e.message}")
+            }
+        }
+
+    /**
+     * Elimina un usuario en Supabase de forma inmediata si está conectado.
+     */
+    suspend fun deleteUserRemote(username: String, sessionManager: SessionManager): Pair<Boolean, String> =
+        withContext(Dispatchers.IO) {
+            if (!sessionManager.isSupabaseEnabled) {
+                return@withContext Pair(false, "Sincronización desactivada")
+            }
+            val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+                ?: return@withContext Pair(false, "Cliente Supabase no disponible")
+
+            return@withContext try {
+                val resp = service.deleteUser("eq.$username")
+                if (resp.isSuccessful) {
+                    Pair(true, "Usuario '@$username' eliminado también en Supabase")
+                } else {
+                    val err = resp.errorBody()?.string() ?: resp.message()
+                    Pair(false, "Error Supabase (HTTP ${resp.code()}): $err")
+                }
+            } catch (e: Exception) {
+                Pair(false, "Error de red al eliminar usuario: ${e.localizedMessage ?: e.message}")
+            }
+        }
+
+    /**
+     * Envía un evento de auditoría (Audit Trail) en tiempo real a Supabase.
+     */
+    suspend fun pushAuditLog(
+        eventType: String,
+        username: String,
+        details: String,
+        severity: String,
+        timestamp: Long,
+        sessionManager: SessionManager
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!sessionManager.isSupabaseEnabled) return@withContext false
+        val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+            ?: return@withContext false
+
+        return@withContext try {
+            val dto = SupabaseAuditLogDto(
+                timestamp = timestamp,
+                eventType = eventType,
+                username = username,
+                details = details,
+                severity = severity
+            )
+            val resp = service.insertAuditLogs(listOf(dto))
+            if (resp.isSuccessful || resp.code() in 200..299) {
+                if (timestamp > sessionManager.lastAuditPushTimestamp) {
+                    sessionManager.lastAuditPushTimestamp = timestamp
+                }
+                true
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Envía una lectura de telemetría a las tablas 'telemetry' y 'sensores' de Supabase.
+     */
+    suspend fun pushTelemetrySnapshot(
+        data: TelemetryResponse,
+        operatorTag: String,
+        isSimulator: Boolean,
+        sessionManager: SessionManager
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (!sessionManager.isSupabaseEnabled) return@withContext false
+        val service = getService(sessionManager.supabaseUrl, sessionManager.supabaseKey)
+            ?: return@withContext false
+
+        return@withContext try {
+            val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            val nowIso = isoFormat.format(Date())
+
+            val telemetryDto = SupabaseTelemetryDto(
+                timestamp = System.currentTimeMillis(),
+                distancia = data.distancia.toFloat(),
+                luz = data.nivelLuz,
+                alarmaActiva = data.alarmaActiva,
+                pestilloAbierto = data.pestilloGrados > 0,
+                modo = if (isSimulator) "SIMULATOR_EDGE" else "ESP32_REAL"
+            )
+            val sensorRecord = SupabaseSensorRecord(
+                fechatoma = nowIso,
+                temperatura = (Math.round(data.temperatura * 100f) / 100f),
+                humedad = (Math.round(data.humedad * 100f) / 100f),
+                distancia_cm = data.distancia,
+                luz_adc = data.nivelLuz,
+                alarma_activa = data.alarmaActiva,
+                operador_android = if (isSimulator) "SIM_${operatorTag}" else "APP_${operatorTag}"
+            )
+
+            val tResp = service.insertTelemetry(telemetryDto)
+            val sResp = service.insertSensorRecord(sensorRecord)
+            tResp.isSuccessful || sResp.isSuccessful
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     /**
      * Retorna el script SQL DDL para crear las tablas en Supabase.

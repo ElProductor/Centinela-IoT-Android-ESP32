@@ -444,10 +444,16 @@ class DatabaseHelper(context: Context) :
     // OPERACIONES DE AUDITORÍA (ISO 27400)
     // ==========================================
 
-    fun logEvent(eventType: String, username: String, details: String, severity: String = "INFO"): Long {
+    fun logEvent(
+        eventType: String,
+        username: String,
+        details: String,
+        severity: String = "INFO",
+        timestamp: Long = System.currentTimeMillis()
+    ): Long {
         val db = writableDatabase
         val values = ContentValues().apply {
-            put(COL_TIMESTAMP, System.currentTimeMillis())
+            put(COL_TIMESTAMP, timestamp)
             put(COL_EVENT_TYPE, eventType)
             put(COL_LOG_USER, username)
             put(COL_DETAILS, details)

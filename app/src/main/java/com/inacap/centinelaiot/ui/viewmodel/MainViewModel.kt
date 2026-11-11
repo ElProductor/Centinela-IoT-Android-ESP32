@@ -12,6 +12,7 @@ import com.inacap.centinelaiot.data.network.NetworkClient
 import com.inacap.centinelaiot.data.network.model.CommandRequest
 import com.inacap.centinelaiot.data.network.model.TelemetryResponse
 import com.inacap.centinelaiot.data.simulator.Esp32VirtualSimulator
+import com.inacap.centinelaiot.data.supabase.SupabaseClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -40,6 +41,7 @@ class MainViewModel : ViewModel() {
     val lastMessage: LiveData<String> = _lastMessage
 
     private var previousAlarmState = false
+    private var lastTelemetryCloudPushMs = 0L
 
     init {
         loadAuditLogs()
@@ -55,11 +57,28 @@ class MainViewModel : ViewModel() {
                     val current = Esp32VirtualSimulator.telemetryFlow.value
                     _telemetry.postValue(current)
                     checkAlarmTransition(current)
+                    maybePushTelemetryToCloud(current, force = false)
                 } else {
                     _connectionStatus.postValue("CONECTANDO A ${session.baseUrl}...")
                     fetchRealHardwareTelemetry()
                 }
                 delay(1200)
+            }
+        }
+    }
+
+    private fun maybePushTelemetryToCloud(data: TelemetryResponse, force: Boolean) {
+        if (!session.isSupabaseEnabled) return
+        val now = System.currentTimeMillis()
+        if (force || now - lastTelemetryCloudPushMs >= 15_000L) {
+            lastTelemetryCloudPushMs = now
+            viewModelScope.launch(Dispatchers.IO) {
+                SupabaseClient.pushTelemetrySnapshot(
+                    data = data,
+                    operatorTag = session.username.ifEmpty { "SISTEMA" },
+                    isSimulator = session.isSimulatorActive,
+                    sessionManager = session
+                )
             }
         }
     }
@@ -75,6 +94,7 @@ class MainViewModel : ViewModel() {
                 _telemetry.postValue(data)
                 _connectionStatus.postValue("ONLINE: ${session.baseUrl}")
                 checkAlarmTransition(data)
+                maybePushTelemetryToCloud(data, force = false)
             } else {
                 _connectionStatus.postValue(smartController.estadoConexion.value)
             }
@@ -91,6 +111,7 @@ class MainViewModel : ViewModel() {
                 details = "¡Alarma activada! Distancia: ${data.distancia} cm (Umbral < ${session.umbralDistancia} cm)",
                 severity = "CRITICAL"
             )
+            maybePushTelemetryToCloud(data, force = true)
         } else if (!data.alarmaActiva && previousAlarmState) {
             // Se desarmó el sistema
             recordAudit(
@@ -98,6 +119,7 @@ class MainViewModel : ViewModel() {
                 details = "Sistema desarmado: Distancia ${data.distancia} cm, Luz ${data.nivelLuz} ADC, Pestillo a ${data.pestilloGrados}°",
                 severity = "INFO"
             )
+            maybePushTelemetryToCloud(data, force = true)
         }
         previousAlarmState = data.alarmaActiva
     }
@@ -112,15 +134,17 @@ class MainViewModel : ViewModel() {
                 usuario = session.username
             )
 
+            val pinInfo = if (pin != null) " [GPIO $pin=${valor ?: ""}]" else ""
             recordAudit(
                 eventType = "REMOTE_COMMAND",
-                details = "Comando '$command' ejecutado por ${session.username} (Rol: ${session.role})",
-                severity = if (command.contains("desbloquear", true)) "WARNING" else "INFO"
+                details = "Comando '$command'$pinInfo ejecutado por ${session.username.ifEmpty { "OPERADOR" }} (Rol: ${session.role})",
+                severity = if (command.contains("desbloquear", true) || command.contains("panico", true)) "WARNING" else "INFO"
             )
 
             if (session.isSimulatorActive) {
                 val res = Esp32VirtualSimulator.executeCommand(req)
                 _lastMessage.postValue(res.mensaje)
+                maybePushTelemetryToCloud(Esp32VirtualSimulator.telemetryFlow.value, force = true)
             } else {
                 try {
                     val service = NetworkClient.getService(session.baseUrl)
@@ -130,6 +154,7 @@ class MainViewModel : ViewModel() {
                     } else {
                         _lastMessage.postValue("Fallo comando: HTTP ${response.code()}")
                     }
+                    _telemetry.value?.let { maybePushTelemetryToCloud(it, force = true) }
                 } catch (e: Exception) {
                     _lastMessage.postValue("Error de red: ${e.message}")
                 }
@@ -140,8 +165,20 @@ class MainViewModel : ViewModel() {
 
     fun recordAudit(eventType: String, details: String, severity: String = "INFO") {
         viewModelScope.launch(Dispatchers.IO) {
-            db.logEvent(eventType, session.username.ifEmpty { "SISTEMA" }, details, severity)
+            val user = session.username.ifEmpty { "SISTEMA" }
+            val ts = System.currentTimeMillis()
+            db.logEvent(eventType, user, details, severity, ts)
             loadAuditLogs()
+            if (session.isSupabaseEnabled) {
+                SupabaseClient.pushAuditLog(
+                    eventType = eventType,
+                    username = user,
+                    details = details,
+                    severity = severity,
+                    timestamp = ts,
+                    sessionManager = session
+                )
+            }
         }
     }
 
@@ -178,6 +215,7 @@ class MainViewModel : ViewModel() {
             )
             db.insertWidget(widget)
             loadWidgets()
+            recordAudit("ACTION_WIDGET_CREATED", "Acción personalizada '$name' ($type, GPIO $pin) agregada", "INFO")
         }
     }
 
@@ -193,6 +231,7 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             db.deleteWidget(widgetId)
             loadWidgets()
+            recordAudit("ACTION_WIDGET_DELETED", "Acción personalizada (ID=$widgetId) eliminada", "INFO")
         }
     }
 
